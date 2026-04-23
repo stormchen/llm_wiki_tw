@@ -1,0 +1,172 @@
+{
+  "app": {
+    "title": "LLM Wiki",
+    "subtitle": "使用 LLM 建立並維護你的個人知識庫"
+  },
+  "nav": {
+    "wiki": "Wiki",
+    "sources": "原始資料",
+    "search": "搜尋",
+    "graph": "關係圖",
+    "lint": "檢查",
+    "review": "待審閱",
+    "settings": "設定",
+    "switchProject": "切換專案"
+  },
+  "welcome": {
+    "newProject": "新增專案",
+    "openProject": "開啟專案",
+    "recentProjects": "最近專案"
+  },
+  "project": {
+    "createTitle": "新增 Wiki 專案",
+    "name": "專案名稱",
+    "namePlaceholder": "my-research-wiki",
+    "parentDir": "上層目錄",
+    "template": "範本",
+    "cancel": "取消",
+    "create": "建立",
+    "creating": "建立中..."
+  },
+  "sources": {
+    "title": "原始資料",
+    "import": "匯入",
+    "importing": "匯入中...",
+    "noSources": "尚無資料",
+    "importHint": "匯入文件，開始建立你的 Wiki",
+    "importFiles": "匯入檔案",
+    "ingest": "提取到 Wiki",
+    "delete": "刪除資料及相關 Wiki 頁面",
+    "deleteConfirm": "刪除「{{name}}」及其相關 Wiki 頁面？\n\n此操作將：\n- 刪除原始資料檔案\n- 刪除由該資料產生的 Wiki 頁面\n- 更新 index.md",
+    "sourceCount": "{{count}} 筆資料",
+    "sourceCount_plural": "{{count}} 筆資料"
+  },
+  "chat": {
+    "placeholder": "向你的 Wiki 提問...",
+    "ingestPlaceholder": "討論資料內容或繼續追問...",
+    "saveToWiki": "儲存到 Wiki",
+    "saving": "儲存中...",
+    "saved": "已儲存！",
+    "writeToWiki": "寫入 Wiki",
+    "emptyHint": "提問或開始提取資料。",
+    "sources": "來源"
+  },
+  "search": {
+    "title": "搜尋",
+    "placeholder": "搜尋 Wiki 頁面...",
+    "noResults": "未找到相關結果",
+    "startSearching": "輸入關鍵字搜尋 Wiki 頁面"
+  },
+  "lint": {
+    "title": "檢查",
+    "runLint": "開始檢查",
+    "running": "檢查中...",
+    "semantic": "語義檢查（LLM）",
+    "allClear": "一切正常，未發現問題",
+    "orphan": "孤立頁面",
+    "brokenLink": "失效連結",
+    "noOutlinks": "無外連",
+    "contradiction": "內容矛盾",
+    "stale": "內容過時",
+    "missingPage": "缺少頁面",
+    "suggestion": "建議"
+  },
+  "review": {
+    "title": "待審閱",
+    "clearResolved": "清除已解決",
+    "allClear": "一切正常，無需審閱"
+  },
+  "settings": {
+    "title": "設定",
+    "llmProvider": "LLM 提供商",
+    "provider": "提供商",
+    "apiKey": "API 金鑰",
+    "apiKeyPlaceholder": "請輸入你的 {{provider}} API 金鑰",
+    "model": "模型",
+    "customModel": "或手動輸入模型名稱",
+    "ollamaUrl": "Ollama 位址",
+    "customEndpoint": "API 端點（OpenAI 相容）",
+    "customEndpointHint": "任何相容 OpenAI 的 API 端點（如 LiteLLM、vLLM、LocalAI、Azure OpenAI）",
+    "customApiKey": "請輸入 API 金鑰（如需要）",
+    "modelPlaceholder": "請輸入模型名稱",
+    "save": "儲存",
+    "saved": "已儲存",
+    "savedTick": "已儲存 ✓",
+    "changeHint": "變更將在儲存後套用。",
+    "language": "語言",
+    "languageHint": "介面語言（Wiki 內容語言以原始資料為準）",
+    "categories": {
+      "llm": "LLM 模型",
+      "embedding": "向量嵌入",
+      "webSearch": "網路搜尋",
+      "output": "輸出偏好",
+      "interface": "介面",
+      "about": "關於"
+    },
+    "sections": {
+      "llm": {
+        "title": "LLM 模型",
+        "description": "每個廠商一條獨立設定。開啟開關即切換為目前使用的 provider；其他的會自動關閉。設定變更即時儲存，每個廠商的 API 金鑰獨立存放，切換時不會遺失。"
+      },
+      "embedding": {
+        "title": "向量嵌入",
+        "description": "開啟後可對 Wiki 頁面進行語意搜尋。嵌入介面在 ingest 時與查詢時都會呼叫。"
+      },
+      "webSearch": {
+        "title": "網路搜尋",
+        "description": "Deep Research 會用它擷取最新的外部資訊。"
+      },
+      "output": {
+        "title": "輸出偏好",
+        "description": "影響產生內容的語言、對話歷史長度等參數。",
+        "aiLanguage": "AI 輸出語言",
+        "aiLanguageHint": "強制 AI 產生內容（聊天回覆、Wiki 頁面、研究結果、Lint 報告）使用指定語言。選「Auto」讓 AI 跟隨使用者輸入或來源文件的語言。",
+        "historyLength": "對話歷史長度",
+        "historyHint": "每次請求傳送給 AI 的歷史訊息筆數。多 = 上下文更完整但消耗更多 token。",
+        "historyCurrent": "目前 {{count}} 條訊息（約 {{turns}} 輪對話）"
+      },
+      "interface": {
+        "title": "介面",
+        "description": "介面語言與外觀樣式。切換後立即生效並持久化。",
+        "uiLanguage": "UI 語言",
+        "uiLanguageHint": "只影響按鈕、標籤等 UI 文字，不影響 AI 輸出語言（那個在「輸出偏好」裡單獨設定）。"
+      },
+      "about": {
+        "title": "關於",
+        "description": "建置資訊與執行階段狀態。",
+        "version": "版本",
+        "clipServer": "Clip 服務",
+        "updateCheck": "更新檢查",
+        "lastChecked": "上次檢查",
+        "lastCheckedNever": "從未",
+        "unreachable": "無法連線至 GitHub",
+        "checkNow": "立即檢查",
+        "checking": "檢查中…",
+        "upToDate": "已是最新版本（v{{version}}）。",
+        "updateAvailable": "有可用更新：v{{version}}",
+        "openDownload": "開啟下載頁面",
+        "later": "稍後",
+        "autoCheck": "應用程式啟動時自動檢查更新（每 6 小時最多一次）",
+        "appDescription": "一個由 LLM 驅動的個人知識庫。原始碼："
+      }
+    }
+  },
+  "preview": {
+    "selectFile": "選擇檔案以預覽",
+    "notAvailable": "此檔案類型不支援預覽"
+  },
+  "activity": {
+    "processing": "處理中：{{title}}",
+    "done": "已完成：{{title}}",
+    "clearCompleted": "清除已完成"
+  },
+  "fileTree": {
+    "noProject": "未開啟專案"
+  },
+  "time": {
+    "justNow": "剛剛",
+    "minutesAgo": "{{count}} 分鐘前",
+    "hoursAgo": "{{count}} 小時前",
+    "daysAgo": "{{count}} 天前"
+  }
+}
