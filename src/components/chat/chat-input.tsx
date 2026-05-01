@@ -1,6 +1,7 @@
 import { useRef, useState, useCallback } from "react"
 import { Send, Square } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { isImeComposing } from "@/lib/keyboard-utils"
 
 interface ChatInputProps {
   onSend: (text: string) => void
@@ -34,11 +35,10 @@ export function ChatInput({ onSend, onStop, isStreaming, placeholder }: ChatInpu
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      // 在組合文字時（例如注音選字），阻止按鍵事件
-      if (isComposing || e.nativeEvent.isComposing || e.keyCode === 229 || e.key === "Process") {
-        return
-      }
-
+      // 在組合文字時（例如注音選字），阻止按鍵事件。
+      // macOS 某些輸入法會在 compositionend 觸發後才送出 Enter keydown，
+      // 使用 isImeComposing 來判定是否處於輸入法組合狀態
+      if (isImeComposing(e)) return
       if (e.key === "Enter" && !e.shiftKey) {
         // macOS 某些輸入法會在 compositionend 觸發後才送出 Enter keydown，
         // 這裡設定 100ms 緩衝區避免這種假 Enter 觸發送出

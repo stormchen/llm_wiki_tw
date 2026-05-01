@@ -1,8 +1,37 @@
 import type { LlmConfig } from "@/stores/wiki-store"
 
+/**
+ * One piece of a multimodal message body. Text + image is the only
+ * shape we use today; the discriminated union makes it cheap to
+ * extend (audio, file, tool_result …) without re-typing every
+ * call site.
+ *
+ * `dataBase64` holds the raw image bytes encoded as base64 — NOT a
+ * `data:` URL. The provider-specific translators below own the
+ * `data:image/png;base64,…` framing because each wire prefers a
+ * different shape (OpenAI puts it inside `image_url.url`, Anthropic
+ * splits the mime type out into `source.media_type`, Gemini uses
+ * `inline_data.mime_type`/`inline_data.data`). Putting the framing
+ * in the translators keeps the producer (image extractor) provider-
+ * agnostic.
+ */
+export type ContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; mediaType: string; dataBase64: string }
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant"
-  content: string
+  /**
+   * `string` is the legacy shape — every existing call site uses it,
+   * and providers that don't speak vision (or callers that don't
+   * have images to send) keep working unchanged.
+   *
+   * `ContentBlock[]` unlocks vision input. Each provider's
+   * `buildBody` translates it into the native wire format; see
+   * `toOpenAiContent` / `toAnthropicContent` / `toGooglePart` /
+   * `extractOllamaImages` below.
+   */
+  content: string | ContentBlock[]
 }
 
 /**
@@ -30,6 +59,58 @@ interface ProviderConfig {
 }
 
 const JSON_CONTENT_TYPE = "application/json"
+
+/**
+ * Origin header for local-LLM endpoints (Ollama, LM Studio, llama.cpp
+ * server, LocalAI, vLLM, …).
+ *
+ * Always sets `Origin: http://localhost` regardless of where the
+ * actual server is. Two interlocking reasons:
+ *
+ *   1. We MUST override the platform default. `@tauri-apps/plugin-
+ *      http` v2.5.x auto-injects the webview's own origin
+ *      (`tauri://localhost` on macOS/Linux,
+ *      `http://tauri.localhost` on Windows). Ollama's default
+ *      `OLLAMA_ORIGINS` allowlist accepts `tauri://*` since ~0.1.30
+ *      but NOT `http://tauri.localhost` — without our override,
+ *      Windows users hit 403. (User packet capture v0.3.11.)
+ *
+ *   2. We can't override with the request's REAL origin because
+ *      that breaks cross-machine LAN setups. A user pointing at
+ *      `http://192.168.0.20:11434/v1` would get `Origin:
+ *      http://192.168.0.20:11434`, which is NOT in Ollama's
+ *      default OLLAMA_ORIGINS — Ollama then 403s or RST-closes
+ *      the connection, surfacing as a generic "error sending
+ *      request" reqwest error. The earlier code claimed Ollama
+ *      did same-origin bypass; it does not. Reported by user
+ *      v0.4.2.
+ *
+ * `http://localhost` is unconditionally in Ollama's default
+ * OLLAMA_ORIGINS list (`http://localhost`, `http://localhost:*`,
+ * `http://127.0.0.1*`, etc.). LM Studio / llama.cpp / vLLM /
+ * LocalAI don't check Origin at all, so the value is ignored
+ * there. The header is purely a CORS-allowlist signal — semantic
+ * "where this request came from" is meaningless here because the
+ * server uses API keys (or no auth), not origin, for actual
+ * permission checks.
+ *
+ * Users who actively tightened OLLAMA_ORIGINS to remove localhost
+ * (rare) need to re-add `http://localhost` to their server config;
+ * no client-side fix can satisfy a hand-locked allowlist that
+ * specifically excludes the one origin every other LLM client
+ * also relies on.
+ *
+ * Why this overrides at all: plugin-http's JS shim respects user-
+ * set headers (see `node_modules/@tauri-apps/plugin-http/dist-js/
+ * index.js` — the loop after `new Request(input, init)` only fills
+ * browser-default headers when the user did NOT already set them).
+ * Rust-side, the `unsafe-headers` feature flag in
+ * `src-tauri/Cargo.toml` lets reqwest forward Origin without
+ * stripping it. End-to-end our value wins.
+ */
+function localLlmOriginHeader(): Record<string, string> {
+  return { Origin: "http://localhost" }
+}
 
 function parseOpenAiLine(line: string): string | null {
   if (!line.startsWith("data: ")) return null
@@ -94,6 +175,38 @@ export function parseGoogleLine(line: string): string | null {
   }
 }
 
+/**
+ * Translate a `ChatMessage.content` into the OpenAI Chat Completions
+ * `content` field. The wire accepts either a plain string or an
+ * array of `{type:"text"|"image_url", ...}` parts; we use the array
+ * form only when the message actually carries an image, so single-
+ * string requests stay byte-identical to what we sent before vision
+ * existed (avoids accidentally regressing endpoints that lag behind
+ * the spec — quite a few llama.cpp and vLLM builds in the wild
+ * still parse `content: string` faster than `content: [...]`).
+ *
+ * Image bytes are emitted as a `data:` URL inside `image_url.url`.
+ * `image_url` accepts both URLs and data URLs; data URL keeps every
+ * byte in the request (no follow-up GET from the model server),
+ * which is what we want for desktop-LLM endpoints that may not
+ * have outbound network access at all.
+ */
+function toOpenAiContent(content: string | ContentBlock[]): unknown {
+  if (typeof content === "string") return content
+  // Pure-text block array → flatten to a string so we don't force
+  // every provider proxy to handle parts. Same wire either way.
+  if (content.every((b) => b.type === "text")) {
+    return content.map((b) => (b.type === "text" ? b.text : "")).join("")
+  }
+  return content.map((b) => {
+    if (b.type === "text") return { type: "text", text: b.text }
+    return {
+      type: "image_url",
+      image_url: { url: `data:${b.mediaType};base64,${b.dataBase64}` },
+    }
+  })
+}
+
 function buildOpenAiBody(
   messages: ChatMessage[],
   overrides?: RequestOverrides,
@@ -101,7 +214,55 @@ function buildOpenAiBody(
   // OpenAI (and every /v1/chat/completions clone — DeepSeek, Groq,
   // Ollama, Zhipu, Kimi, xAI, MiniMax OpenAI-compat, ...) accepts these
   // knobs at the top level using the names clients already send.
-  return { messages, stream: true, ...(overrides ?? {}) }
+  const translated = messages.map((m) => ({
+    role: m.role,
+    content: toOpenAiContent(m.content),
+  }))
+  return { messages: translated, stream: true, ...(overrides ?? {}) }
+}
+
+/**
+ * Translate `ChatMessage.content` into Anthropic Messages
+ * `content`. Anthropic requires the array form for any non-text
+ * block, and uses a different shape than OpenAI for images
+ * (`source.media_type` + `source.data` instead of a `data:` URL).
+ *
+ * For system messages, Anthropic accepts the top-level `system`
+ * field as a string OR as a content-block array. We always
+ * stringify system content here because every existing system-
+ * prompt call site sends a string and the round-trip through
+ * blocks is lossy.
+ */
+function toAnthropicContent(content: string | ContentBlock[]): unknown {
+  if (typeof content === "string") return content
+  if (content.every((b) => b.type === "text")) {
+    return content.map((b) => (b.type === "text" ? b.text : "")).join("")
+  }
+  return content.map((b) => {
+    if (b.type === "text") return { type: "text", text: b.text }
+    return {
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: b.mediaType,
+        data: b.dataBase64,
+      },
+    }
+  })
+}
+
+/**
+ * Anthropic's top-level `system` field is a string, not blocks.
+ * If a caller puts images inside a system message we drop them —
+ * Anthropic doesn't accept system-level images today, and silently
+ * losing them is the lesser evil compared to the request 400ing
+ * out for "Unsupported content block in system".
+ */
+function flattenAnthropicSystem(content: string | ContentBlock[]): string {
+  if (typeof content === "string") return content
+  return content
+    .map((b) => (b.type === "text" ? b.text : ""))
+    .join("")
 }
 
 function buildAnthropicBody(
@@ -109,8 +270,12 @@ function buildAnthropicBody(
   overrides?: RequestOverrides,
 ): Record<string, unknown> {
   const systemMessages = messages.filter((m) => m.role === "system")
-  const conversationMessages = messages.filter((m) => m.role !== "system")
-  const system = systemMessages.map((m) => m.content).join("\n") || undefined
+  const conversationMessages = messages
+    .filter((m) => m.role !== "system")
+    .map((m) => ({ role: m.role, content: toAnthropicContent(m.content) }))
+  const system =
+    systemMessages.map((m) => flattenAnthropicSystem(m.content)).join("\n") ||
+    undefined
 
   // Anthropic Messages uses top_p / top_k (Python-style snake_case), a
   // mandatory `max_tokens`, and `stop_sequences` instead of `stop`.
@@ -187,6 +352,31 @@ function buildAnthropicHeaders(apiKey: string, url: string): Record<string, stri
   return base
 }
 
+/**
+ * Translate `ChatMessage.content` into Gemini `parts`. Gemini's
+ * native shape is already block-like (`parts: [{text}|{inline_data}]`)
+ * so the mapping is mostly cosmetic — we don't try to flatten
+ * single-text-block arrays because Gemini accepts the array form
+ * uniformly.
+ */
+function toGoogleParts(content: string | ContentBlock[]): unknown[] {
+  if (typeof content === "string") return [{ text: content }]
+  return content.map((b) => {
+    if (b.type === "text") return { text: b.text }
+    return {
+      inline_data: {
+        mime_type: b.mediaType,
+        data: b.dataBase64,
+      },
+    }
+  })
+}
+
+function flattenGoogleSystemParts(content: string | ContentBlock[]): string {
+  if (typeof content === "string") return content
+  return content.map((b) => (b.type === "text" ? b.text : "")).join("")
+}
+
 function buildGoogleBody(
   messages: ChatMessage[],
   overrides?: RequestOverrides,
@@ -196,13 +386,17 @@ function buildGoogleBody(
 
   const contents = conversationMessages.map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
-    parts: [{ text: m.content }],
+    parts: toGoogleParts(m.content),
   }))
 
+  // Gemini's `systemInstruction.parts` is a `parts` array but in
+  // practice every consumer flattens it to a string equivalent —
+  // images in a system instruction are not a documented use case.
+  // Keep it text-only.
   const systemInstruction =
     systemMessages.length > 0
       ? {
-          parts: systemMessages.map((m) => ({ text: m.content })),
+          parts: systemMessages.map((m) => ({ text: flattenGoogleSystemParts(m.content) })),
         }
       : undefined
 
@@ -294,6 +488,7 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
         url: `${ollamaBase}/v1/chat/completions`,
         headers: {
           "Content-Type": JSON_CONTENT_TYPE,
+          ...localLlmOriginHeader(),
         },
         buildBody: (messages, overrides) => {
           const body: Record<string, unknown> = {
@@ -332,6 +527,15 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
       }
     }
 
+    case "claude-code":
+      // Claude Code CLI uses a subprocess transport (stdin/stdout JSON
+      // stream), not HTTP. Dispatch happens one layer up in
+      // streamChat() before getProviderConfig is called. Reaching this
+      // branch means wiring is broken somewhere upstream.
+      throw new Error(
+        "claude-code provider uses subprocess transport; getProviderConfig should not be called for it",
+      )
+
     case "custom": {
       // Custom endpoints can speak either OpenAI's /chat/completions
       // wire or Anthropic's /v1/messages wire. The field `apiMode` on
@@ -363,6 +567,10 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
         headers: {
           "Content-Type": JSON_CONTENT_TYPE,
           ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+          // Local OpenAI-compatible servers (LM Studio, llama.cpp,
+          // vLLM, LocalAI) often share Ollama's CORS sensitivity.
+          // Same rationale as the `ollama` branch above.
+          ...localLlmOriginHeader(),
         },
         buildBody: (messages, overrides) => ({
           ...buildOpenAiBody(messages, overrides),

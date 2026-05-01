@@ -6,29 +6,43 @@ import {
   Languages,
   Palette,
   Info,
+  Image as ImageIcon,
+  Network,
+  History,
+  Wrench,
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
+import { invoke } from "@tauri-apps/api/core"
 import i18n from "@/i18n"
 import { Button } from "@/components/ui/button"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useChatStore } from "@/stores/chat-store"
+import { useUpdateStore, hasAvailableUpdate } from "@/stores/update-store"
 import { saveLanguage } from "@/lib/project-store"
 import type { SettingsDraft, DraftSetter } from "./settings-types"
 import { LlmProviderSection } from "./sections/llm-provider-section"
 import { EmbeddingSection } from "./sections/embedding-section"
+import { MultimodalSection } from "./sections/multimodal-section"
 import { WebSearchSection } from "./sections/web-search-section"
 import { OutputSection } from "./sections/output-section"
 import { InterfaceSection } from "./sections/interface-section"
 import { IntegrationsSection } from "./sections/integrations-section"
+import { NetworkSection } from "./sections/network-section"
+import { ChangelogSection } from "./sections/changelog-section"
+import { MaintenanceSection } from "./sections/maintenance-section"
 import { AboutSection } from "./sections/about-section"
 
 type CategoryId =
   | "llm"
   | "embedding"
+  | "multimodal"
   | "web-search"
+  | "network"
   | "output"
   | "interface"
   | "integrations"
+  | "maintenance"
+  | "changelog"
   | "about"
 
 interface Category {
@@ -45,10 +59,14 @@ import { Plug } from "lucide-react"
 const CATEGORIES: Category[] = [
   { id: "llm", labelKey: "settings.categories.llm", icon: Bot },
   { id: "embedding", labelKey: "settings.categories.embedding", icon: Binary },
+  { id: "multimodal", labelKey: "settings.categories.multimodal", icon: ImageIcon },
   { id: "web-search", labelKey: "settings.categories.webSearch", icon: Globe },
+  { id: "network", labelKey: "settings.categories.network", icon: Network },
   { id: "output", labelKey: "settings.categories.output", icon: Languages },
   { id: "interface", labelKey: "settings.categories.interface", icon: Palette },
   { id: "integrations", labelKey: "settings.categories.integrations", icon: Plug },
+  { id: "maintenance", labelKey: "settings.categories.maintenance", icon: Wrench },
+  { id: "changelog", labelKey: "settings.categories.changelog", icon: History },
   { id: "about", labelKey: "settings.categories.about", icon: Info },
 ]
 
@@ -56,7 +74,9 @@ function initialDraft(
   llm: ReturnType<typeof useWikiStore.getState>["llmConfig"],
   search: ReturnType<typeof useWikiStore.getState>["searchApiConfig"],
   embed: ReturnType<typeof useWikiStore.getState>["embeddingConfig"],
+  multimodal: ReturnType<typeof useWikiStore.getState>["multimodalConfig"],
   outputLanguage: ReturnType<typeof useWikiStore.getState>["outputLanguage"],
+  proxy: ReturnType<typeof useWikiStore.getState>["proxyConfig"],
   maxHistoryMessages: number,
   uiLanguage: string,
   notionApiKey: string,
@@ -73,10 +93,24 @@ function initialDraft(
     embeddingEndpoint: embed.endpoint,
     embeddingApiKey: embed.apiKey,
     embeddingModel: embed.model,
+    embeddingMaxChunkChars: embed.maxChunkChars,
+    embeddingOverlapChunkChars: embed.overlapChunkChars,
+    multimodalEnabled: multimodal.enabled,
+    multimodalUseMainLlm: multimodal.useMainLlm,
+    multimodalProvider: multimodal.provider,
+    multimodalApiKey: multimodal.apiKey,
+    multimodalModel: multimodal.model,
+    multimodalOllamaUrl: multimodal.ollamaUrl,
+    multimodalCustomEndpoint: multimodal.customEndpoint,
+    multimodalApiMode: multimodal.apiMode,
+    multimodalConcurrency: multimodal.concurrency,
     searchProvider: search.provider,
     searchApiKey: search.apiKey,
     outputLanguage,
     maxHistoryMessages,
+    proxyEnabled: proxy.enabled,
+    proxyUrl: proxy.url,
+    proxyBypassLocal: proxy.bypassLocal,
     uiLanguage,
     notionApiKey,
   }
@@ -90,11 +124,24 @@ export function SettingsView() {
   const setSearchApiConfig = useWikiStore((s) => s.setSearchApiConfig)
   const embeddingConfig = useWikiStore((s) => s.embeddingConfig)
   const setEmbeddingConfig = useWikiStore((s) => s.setEmbeddingConfig)
+  const multimodalConfig = useWikiStore((s) => s.multimodalConfig)
+  const setMultimodalConfig = useWikiStore((s) => s.setMultimodalConfig)
   const outputLanguage = useWikiStore((s) => s.outputLanguage)
   const setOutputLanguage = useWikiStore((s) => s.setOutputLanguage)
   const notionApiKey = useWikiStore((s) => s.notionApiKey)
+  const proxyConfig = useWikiStore((s) => s.proxyConfig)
+  const setProxyConfig = useWikiStore((s) => s.setProxyConfig)
   const maxHistoryMessages = useChatStore((s) => s.maxHistoryMessages)
   const setMaxHistoryMessages = useChatStore((s) => s.setMaxHistoryMessages)
+  // Drives the red dot next to the "About" row in the settings
+  // sidebar. Uses `hasAvailableUpdate` (NOT `shouldShowUpdateBanner`)
+  // so the indicator remains even after the user dismisses the
+  // top banner — the user explicitly asked for the gear/About dots
+  // to keep showing as a signpost so they can find the update
+  // again later. The top banner stays gated by the dismiss
+  // preference so the more aggressive interruption only fires once
+  // per version.
+  const updateAvailable = useUpdateStore((s) => hasAvailableUpdate(s))
 
   const [active, setActive] = useState<CategoryId>("llm")
   const [saved, setSaved] = useState(false)
@@ -103,7 +150,9 @@ export function SettingsView() {
       llmConfig,
       searchApiConfig,
       embeddingConfig,
+      multimodalConfig,
       outputLanguage,
+      proxyConfig,
       maxHistoryMessages,
       i18n.language,
       notionApiKey,
@@ -117,7 +166,9 @@ export function SettingsView() {
         llmConfig,
         searchApiConfig,
         embeddingConfig,
+        multimodalConfig,
         outputLanguage,
+        proxyConfig,
         maxHistoryMessages,
         i18n.language,
         notionApiKey,
@@ -127,7 +178,9 @@ export function SettingsView() {
     llmConfig,
     searchApiConfig,
     embeddingConfig,
+    multimodalConfig,
     outputLanguage,
+    proxyConfig,
     maxHistoryMessages,
     notionApiKey,
   ])
@@ -141,7 +194,9 @@ export function SettingsView() {
       saveLlmConfig,
       saveSearchApiConfig,
       saveEmbeddingConfig,
+      saveMultimodalConfig,
       saveOutputLanguage,
+      saveProxyConfig,
     } = await import("@/lib/project-store")
 
     const newLlm = {
@@ -159,6 +214,31 @@ export function SettingsView() {
       endpoint: draft.embeddingEndpoint,
       apiKey: draft.embeddingApiKey,
       model: draft.embeddingModel,
+      maxChunkChars: draft.embeddingMaxChunkChars,
+      overlapChunkChars: draft.embeddingOverlapChunkChars,
+    }
+    const newMultimodal = {
+      enabled: draft.multimodalEnabled,
+      useMainLlm: draft.multimodalUseMainLlm,
+      provider: draft.multimodalProvider,
+      apiKey: draft.multimodalApiKey,
+      model: draft.multimodalModel,
+      ollamaUrl: draft.multimodalOllamaUrl,
+      customEndpoint: draft.multimodalCustomEndpoint,
+      apiMode: draft.multimodalProvider === "custom" ? draft.multimodalApiMode : undefined,
+      // Clamp at save time so a hand-edited persisted store with a
+      // ridiculous concurrency value (e.g. someone setting 1000 in
+      // the JSON) doesn't blow up the captioning pipeline. Caption
+      // calls already share the LLM endpoint with everything else;
+      // going wider than ~16 just queues behind the server's batch
+      // slot.
+      concurrency: Math.max(1, Math.min(16, draft.multimodalConcurrency || 4)),
+    }
+
+    const newProxy = {
+      enabled: draft.proxyEnabled,
+      url: draft.proxyUrl.trim(),
+      bypassLocal: draft.proxyBypassLocal,
     }
 
     setLlmConfig(newLlm)
@@ -167,8 +247,21 @@ export function SettingsView() {
     await saveSearchApiConfig(newSearch)
     setEmbeddingConfig(newEmbed)
     await saveEmbeddingConfig(newEmbed)
+    setMultimodalConfig(newMultimodal)
+    await saveMultimodalConfig(newMultimodal)
     setOutputLanguage(draft.outputLanguage as typeof outputLanguage)
     await saveOutputLanguage(draft.outputLanguage as typeof outputLanguage)
+    setProxyConfig(newProxy)
+    await saveProxyConfig(newProxy)
+    // Apply the proxy env vars LIVE so the next outbound request
+    // picks them up — no app restart needed. tauri-plugin-http
+    // builds a fresh reqwest client per fetch and reqwest reads
+    // env vars at build time, so changing them here is enough.
+    try {
+      await invoke<string>("set_proxy_env", { config: newProxy })
+    } catch (err) {
+      console.warn("[proxy] live update failed; restart will still apply:", err)
+    }
     setMaxHistoryMessages(draft.maxHistoryMessages)
     const { saveNotionApiKey } = await import("@/lib/project-store")
     useWikiStore.getState().setNotionApiKey(draft.notionApiKey)
@@ -187,6 +280,7 @@ export function SettingsView() {
     setSearchApiConfig,
     setEmbeddingConfig,
     setOutputLanguage,
+    setProxyConfig,
     setMaxHistoryMessages,
     outputLanguage,
   ])
@@ -200,14 +294,22 @@ export function SettingsView() {
         return <LlmProviderSection />
       case "embedding":
         return <EmbeddingSection draft={draft} setDraft={setDraft} />
+      case "multimodal":
+        return <MultimodalSection draft={draft} setDraft={setDraft} />
       case "web-search":
         return <WebSearchSection draft={draft} setDraft={setDraft} />
+      case "network":
+        return <NetworkSection draft={draft} setDraft={setDraft} />
       case "output":
         return <OutputSection draft={draft} setDraft={setDraft} />
       case "interface":
         return <InterfaceSection draft={draft} setDraft={setDraft} />
       case "integrations":
         return <IntegrationsSection draft={draft} setDraft={setDraft} />
+      case "maintenance":
+        return <MaintenanceSection />
+      case "changelog":
+        return <ChangelogSection />
       case "about":
         return <AboutSection />
     }
@@ -225,6 +327,14 @@ export function SettingsView() {
           {CATEGORIES.map((c) => {
             const Icon = c.icon
             const isActive = c.id === active
+            // Mirror the gear-icon dot inside the settings sidebar
+            // so the user can find which sub-section the update
+            // notification is pointing at. Update info lives in
+            // the About panel, so the dot follows the About row.
+            // Same store, same gating — once dismissed, both
+            // disappear together.
+            const showUpdateDot =
+              c.id === "about" && updateAvailable
             return (
               <button
                 key={c.id}
@@ -243,6 +353,13 @@ export function SettingsView() {
                   }`}
                 />
                 <span className="truncate">{t(c.labelKey)}</span>
+                {showUpdateDot && (
+                  <span
+                    className="ml-auto h-2 w-2 shrink-0 rounded-full bg-red-500"
+                    aria-label={t("nav.updateAvailable")}
+                    title={t("nav.updateAvailable")}
+                  />
+                )}
               </button>
             )
           })}
@@ -257,8 +374,8 @@ export function SettingsView() {
 
         {/* Global Save bar hidden for sections that persist inline:
             - "llm" saves per-row on every edit (independent per-preset state)
-            - "about" has no editable fields */}
-        {active !== "about" && active !== "llm" && (
+            - "about" / "maintenance" have no draft-bound fields */}
+        {active !== "about" && active !== "llm" && active !== "maintenance" && (
           <div className="shrink-0 border-t bg-background/80 backdrop-blur px-8 py-3">
             <div className="mx-auto flex max-w-2xl items-center justify-between gap-4">
               <p className="text-xs text-muted-foreground">

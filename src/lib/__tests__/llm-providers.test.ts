@@ -194,6 +194,24 @@ describe("parseGoogleLine — Gemini SSE parsing", () => {
   })
 })
 
+describe("Claude Code CLI provider — not reachable via getProviderConfig", () => {
+  it("throws, because the subprocess transport dispatches one layer up in streamChat", () => {
+    // If this ever stops throwing, someone wired claude-code into the
+    // HTTP path by mistake — it has no URL/headers and would crash
+    // silently inside fetch() otherwise.
+    expect(() =>
+      getProviderConfig({
+        provider: "claude-code",
+        apiKey: "",
+        model: "claude-sonnet-4-6",
+        ollamaUrl: "",
+        customEndpoint: "",
+        maxContextSize: 200000,
+      } as RealLlmConfig),
+    ).toThrow(/subprocess transport/)
+  })
+})
+
 describe("Google provider URL — model path encoding", () => {
   const makeGoogleConfig = (model: string): RealLlmConfig => ({
     provider: "google",
@@ -301,5 +319,125 @@ describe("Sampling override translation across wires", () => {
     expect(body.stop_sequences).toEqual(["END"])
     expect(body.stop).toBeUndefined()
     expect(body.max_tokens).toBe(8192)
+  })
+})
+
+// ── Origin header for local LLM providers (Ollama + custom OpenAI) ──
+//
+// History pinned by two user reports:
+//
+//   v0.3.11: a Windows user's packet capture showed plugin-http's
+//   auto-injected origin was `http://tauri.localhost` (NOT
+//   `tauri://localhost` like macOS/Linux), triggering Ollama 403
+//   because the default OLLAMA_ORIGINS list has `tauri://*` but
+//   not `http://tauri.localhost`. We started overriding the header.
+//
+//   v0.4.2: a user with Ollama on a LAN box at 192.168.x reported
+//   "error sending request" (reqwest network error). Diagnosis:
+//   our v0.3.11 fix set Origin to the request URL's own host
+//   (`http://192.168.0.20:11434`), which IS NOT in the default
+//   OLLAMA_ORIGINS list either. Older Ollama versions reject same-
+//   origin literally if it's not on the allowlist; some close the
+//   TCP connection rather than 403, which surfaces as a generic
+//   reqwest error.
+//
+// Current strategy: ALWAYS send `Origin: http://localhost`
+// regardless of where the actual server is. Ollama's default
+// OLLAMA_ORIGINS unconditionally includes `http://localhost` (and
+// the related `127.0.0.1` / port-wildcard variants); LM Studio /
+// llama.cpp / vLLM don't check Origin at all. The header is purely
+// a CORS-allowlist signal — semantically lying about "where this
+// request came from" is fine because the server uses API keys (or
+// no auth), not origin, for actual permission checks.
+
+describe("Origin header — local LLM CORS workaround", () => {
+  it("Ollama provider sends Origin: http://localhost when server is on localhost", () => {
+    const cfg = getProviderConfig({
+      provider: "ollama",
+      apiKey: "",
+      model: "llama3",
+      ollamaUrl: "http://localhost:11434",
+      customEndpoint: "",
+      maxContextSize: 8192,
+    })
+    expect(cfg.headers["Origin"]).toBe("http://localhost")
+  })
+
+  it("Ollama provider sends Origin: http://localhost EVEN WHEN server is on a remote LAN IP", () => {
+    // This is the v0.4.2 user-reported bug: previously the Origin
+    // mirrored the request URL's host (`http://192.168.1.50:11434`),
+    // which Ollama's default OLLAMA_ORIGINS doesn't include →
+    // request rejected. Forcing localhost makes any LAN deployment
+    // pass Ollama's CORS check.
+    const cfg = getProviderConfig({
+      provider: "ollama",
+      apiKey: "",
+      model: "llama3",
+      ollamaUrl: "http://192.168.1.50:11434",
+      customEndpoint: "",
+      maxContextSize: 8192,
+    })
+    expect(cfg.headers["Origin"]).toBe("http://localhost")
+  })
+
+  it("Ollama provider Origin doesn't change with /v1 in the URL", () => {
+    const cfg = getProviderConfig({
+      provider: "ollama",
+      apiKey: "",
+      model: "llama3",
+      ollamaUrl: "http://localhost:11434/v1",
+      customEndpoint: "",
+      maxContextSize: 8192,
+    })
+    expect(cfg.headers["Origin"]).toBe("http://localhost")
+  })
+
+  it("custom OpenAI-compat endpoint gets the same Origin override (LM Studio / llama.cpp / vLLM)", () => {
+    // For these servers Origin is ignored entirely — but we send
+    // the value anyway so behavior is uniform across local-LLM
+    // providers and the rare hardened deployment that does check
+    // CORS still works.
+    const cfg = getProviderConfig({
+      provider: "custom",
+      apiKey: "",
+      model: "qwen3",
+      ollamaUrl: "",
+      customEndpoint: "http://127.0.0.1:1234",
+      maxContextSize: 8192,
+      apiMode: "chat_completions",
+    } as RealLlmConfig)
+    expect(cfg.headers["Origin"]).toBe("http://localhost")
+  })
+
+  it("commercial provider (OpenAI) does NOT get an explicit Origin override", () => {
+    // OpenAI's CORS doesn't care about Origin (auth is via API key).
+    // Setting Origin would just be noise. Pin that we DON'T touch
+    // commercial endpoints.
+    const cfg = getProviderConfig({
+      provider: "openai",
+      apiKey: "k",
+      model: "gpt-4o",
+      ollamaUrl: "",
+      customEndpoint: "",
+      maxContextSize: 128000,
+    })
+    expect(cfg.headers["Origin"]).toBeUndefined()
+  })
+
+  it("Ollama provider always sets Origin even when the configured URL is malformed", () => {
+    // The fixed-string Origin doesn't depend on URL parsing, so a
+    // mistyped config can't strip the header. (The request itself
+    // will fail elsewhere because the URL is bad — that's not this
+    // helper's concern.)
+    const cfg = getProviderConfig({
+      provider: "ollama",
+      apiKey: "",
+      model: "llama3",
+      ollamaUrl: "not a url",
+      customEndpoint: "",
+      maxContextSize: 8192,
+    })
+    expect(cfg.headers["Origin"]).toBe("http://localhost")
+    expect(typeof cfg.url).toBe("string")
   })
 })

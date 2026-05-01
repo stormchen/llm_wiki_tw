@@ -11,7 +11,14 @@
     "lint": "检查",
     "review": "待审阅",
     "settings": "设置",
-    "switchProject": "切换项目"
+    "switchProject": "切换项目",
+    "updateAvailable": "有可用更新",
+    "updateAvailableSuffix": " · 有更新"
+  },
+  "updateBanner": {
+    "message": "新版本 {{version}} 已发布",
+    "openDownload": "打开下载页",
+    "dismiss": "关闭"
   },
   "welcome": {
     "newProject": "新建项目",
@@ -98,24 +105,97 @@
     "categories": {
       "llm": "LLM 模型",
       "embedding": "向量嵌入",
+      "multimodal": "图片描述",
       "webSearch": "网页搜索",
+      "network": "网络",
       "output": "输出偏好",
       "interface": "界面",
       "integrations": "整合",
+      "maintenance": "维护",
+      "changelog": "更新日志",
       "about": "关于"
     },
     "sections": {
       "llm": {
         "title": "LLM 模型",
-        "description": "每个厂商一条独立配置。打开开关即切换为当前活跃 provider；其他的会自动关闭。配置改动即时保存,每个厂商的 API Key 独立存储,切换之间不丢失。"
+        "description": "每个厂商一条独立配置。打开开关即切换为当前活跃 provider；其他的会自动关闭。配置改动即时保存,每个厂商的 API Key 独立存储,切换之间不丢失。",
+        "expand": "展开配置",
+        "collapse": "收起",
+        "toggleOff": "点击关闭",
+        "toggleOn": "点击启用（会关闭其他 provider）",
+        "wireOpenAi": "OpenAI 兼容",
+        "wireAnthropic": "Anthropic 兼容",
+        "apiKeyPlaceholderCustom": "无 Key 可留空（本地模型）",
+        "apiKeyPlaceholder": "请输入 API Key",
+        "savedBadge": "已保存",
+        "configuredBadge": "已配置",
+        "activeBadge": "● 活跃",
+        "endpointPreviewWillUse": "将使用",
+        "endpointPreviewAutoApply": "（离开输入框时自动套用）"
       },
       "embedding": {
         "title": "向量嵌入",
-        "description": "开启后可对 wiki 页面进行语义检索。嵌入接口在 ingest 时和查询时都会调用。"
+        "description": "启用语义搜索。对任何 OpenAI 兼容的 /v1/embeddings endpoint 工作。本地模型（如 LM Studio、Ollama embedding）不需要 API Key。",
+        "enableLabel": "启用向量搜索",
+        "enableHint": "关掉后搜索只走 token 匹配。",
+        "endpoint": "Endpoint",
+        "apiKey": "API Key（可选）",
+        "apiKeyPlaceholder": "本地模型留空即可",
+        "model": "Model",
+        "chunking": "切分参数",
+        "maxChunkChars": "每块最大字符数",
+        "maxChunkCharsHint": "单个 chunk 的目标长度。endpoint 上下文较小时（llama.cpp n_ctx=512、mxbai-embed-large 等）调低（如 500）。",
+        "overlapChunkChars": "重叠字符数",
+        "overlapChunkCharsHint": "相邻 chunk 之间的重叠字符数，避免语义在边界被切断。",
+        "statsHeading": "索引状态",
+        "chunkCount": "已索引 {{count}} 个 chunk",
+        "lastErrorHeading": "上次 embedding 错误",
+        "reindexAll": "重新索引全部页面",
+        "reindexing": "索引中 {{done}}/{{total}}…",
+        "reindexDone": "已索引 {{count}} 个页面。",
+        "legacyPromptTitle": "检测到旧版（按页）索引",
+        "legacyPromptBody": "当前项目在旧版按页向量存储里有 {{count}} 条记录。新版按 chunk 索引检索质量更高,但需要一次性重新 embed。点击\"重新索引全部页面\"完成升级。",
+        "dropLegacy": "删除旧版索引",
+        "dropLegacyDone": "旧版索引已删除。"
+      },
+      "multimodal": {
+        "title": "图片描述",
+        "description": "导入时调用视觉模型为 PDF / DOCX / PPTX 中提取的图片生成事实性描述。描述会写入源 markdown 的 alt 属性，语义搜索按图片内容查询时就靠它命中。按图片字节 SHA-256 缓存，跨文档重复出现的 logo / 图表模板只调用一次。",
+        "enableLabel": "导入时生成图片描述",
+        "enableHint": "关：ingest 时把图片引用从内容里剥掉 —— wiki 页面里不会出现图片，搜索也不会返回。（图片仍会落到 wiki/media/，原始文档预览能看到。）开：每张新图调用视觉模型生成事实性 caption（按 hash 缓存），写入 wiki 页面 alt 属性。",
+        "stateOn": "已开启",
+        "stateOff": "已关闭",
+        "useMainLabel": "使用主 LLM 生成 caption",
+        "useMainHint": "复用「设置 → LLM Provider」里选的模型。仅当主模型支持图像输入时打开 —— 纯文本模型会返回 400。",
+        "dedicatedHeading": "独立视觉端点",
+        "provider": "Provider",
+        "ollamaUrl": "Ollama URL",
+        "customEndpoint": "端点 URL",
+        "customEndpointHint": "OpenAI 兼容的 /v1 根地址。LM Studio、llama.cpp server、vLLM、LocalAI 都可以。",
+        "apiKey": "API Key",
+        "apiKeyPlaceholder": "本地 / 无鉴权端点留空",
+        "model": "模型",
+        "modelHint": "必须是支持视觉输入的模型。文本-only 模型会在首次 ingest 时报 400 / image-not-supported。",
+        "concurrency": "并发 caption 请求数",
+        "concurrencyHint": "并行多少个 caption 请求。1 = 严格串行。多数场景 4 合适；只有在高性能 GPU 或托管端点上才考虑 8+。",
+        "costHeading": "费用提示",
+        "costPoint1": "每张新图触发一次视觉模型调用（约 500-2000 token，取决于模型和 thinking 模式）。",
+        "costPoint2": "Caption 按图片字节 SHA-256 缓存。跨文档重复的 logo / 通用图表模板只调用 ONE 次。",
+        "costPoint3": "Rust 端过滤掉小于 100×100 像素的图，并限制每文档最多 500 张 —— 病态 PDF 不会无限放大费用。",
+        "costPoint4": "批量 ingest 推荐用本地视觉模型（LM Studio / Ollama 跑 Qwen2.5-VL）；托管视觉 API 留给少量高价值文档。"
       },
       "webSearch": {
         "title": "网页搜索",
         "description": "Deep Research 会用它拉取最新的外部上下文。"
+      },
+      "network": {
+        "title": "网络",
+        "description": "让所有外部 HTTP 请求（LLM、向量、搜索、更新检查）走代理。点击保存即时生效，不需要重启应用。",
+        "enable": "启用代理",
+        "url": "代理地址",
+        "urlHelp": "完整 URL，必须带协议头。支持：http://、https://（当前版本不支持 SOCKS5）。",
+        "bypassLocal": "本地地址不走代理（推荐）",
+        "bypassLocalHelp": "对 localhost、127.0.0.0/8、10.0.0.0/8、172.16.0.0/12、192.168.0.0/16 以及 *.local 的请求会绕过代理。如果你用 Ollama / LM Studio 或局域网内的 LLM 服务，请保持开启。"
       },
       "output": {
         "title": "输出偏好",
@@ -137,6 +217,38 @@
         "description": "配置第三方服务整合。",
         "notionApiKey": "Notion API 密钥",
         "notionApiKeyHint": "你的 Notion 内部集成令牌 (Internal Integration Token)。用于导入 Notion 页面。"
+      },
+      "maintenance": {
+        "title": "维护",
+        "description": "清理 wiki 的工具 —— 检测并合并 LLM 在多次再导入时用不同名字创建的重复实体 / 概念。",
+        "noProject": "请先打开一个项目。",
+        "noLlm": "请先配置 LLM 服务。",
+        "dedup": {
+          "title": "检测重复实体 / 概念",
+          "description": "让 LLM 扫描全部 entity / concept 页面，把可能指向同一主题但用了不同名字的页面分组（中英对照、单复数、缩写与全称等）。每一组都需要你确认后才会合并。合并任务会进入串行队列依次执行，避免交叉引用被并发改写覆盖。",
+          "scanButton": "扫描重复项",
+          "scanning": "扫描中…",
+          "noneFound": "未发现重复分组，wiki 很干净。",
+          "candidates": "{{n}} 个候选",
+          "canonicalLabel": "保留以下 slug 作为主条目：",
+          "mergeButton": "合并到 {{slug}}",
+          "merging": "合并中…",
+          "queued": "排队中",
+          "queuedAhead": "排队中（前面还有 {{n}} 个）",
+          "failed": "失败（{{retries}}/3）",
+          "cancel": "取消",
+          "retry": "重试",
+          "delete": "删除",
+          "queueTitle": "进行中的合并",
+          "queueDescription": "上次扫描后排进队列、还未跑完的合并任务。每次只跑一个。",
+          "notDuplicates": "不是重复",
+          "merged": "已合并",
+          "skipped": "已标记为不重复"
+        }
+      },
+      "changelog": {
+        "title": "更新日志",
+        "description": "每个版本对用户可见的功能改动，最新版本在最前面。"
       },
       "about": {
         "title": "关于",

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
+import { openUrl } from "@tauri-apps/plugin-opener"
 import { clipServerStatus } from "@/commands/fs"
-
 
 export function AboutSection() {
   const { t } = useTranslation()
@@ -21,14 +21,10 @@ export function AboutSection() {
     }
   }, [])
 
-
-
   const rows: Array<{ label: string; value: string; mono?: boolean }> = [
     { label: t("settings.sections.about.version"), value: `v${__APP_VERSION__}`, mono: true },
     { label: t("settings.sections.about.clipServer"), value: `${clipStatus}  @  127.0.0.1:19827`, mono: true },
   ]
-
-
 
   return (
     <div className="space-y-6">
@@ -48,18 +44,20 @@ export function AboutSection() {
         ))}
       </div>
 
-
-
       <div className="rounded-md border p-4 text-sm">
         <div className="font-medium">LLM Wiki</div>
         <p className="mt-1 text-xs text-muted-foreground">
           {t("settings.sections.about.appDescription")}
           {" "}
           <a
-            className="underline underline-offset-2 hover:text-primary"
+            className="cursor-pointer underline underline-offset-2 hover:text-primary"
             href="https://github.com/stormchen/llm_wiki_tw"
-            target="_blank"
-            rel="noreferrer"
+            onClick={(e) => {
+              e.preventDefault()
+              void openUrl("https://github.com/stormchen/llm_wiki_tw").catch((err) => {
+                console.error("[about] openUrl failed:", err)
+              })
+            }}
           >
             github.com/stormchen/llm_wiki_tw
           </a>

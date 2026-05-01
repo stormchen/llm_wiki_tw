@@ -1,6 +1,7 @@
 mod clip_server;
 mod commands;
 mod panic_guard;
+mod proxy;
 mod types;
 
 use panic_guard::run_guarded;
@@ -11,6 +12,22 @@ fn clip_server_status() -> String {
         Ok(clip_server::get_daemon_status().to_string())
     })
     .unwrap_or_else(|e| format!("error: {e}"))
+}
+
+/// Apply a proxy configuration to the process env immediately, so the
+/// next outbound HTTP request picks it up without needing the user to
+/// restart the app. tauri-plugin-http builds a fresh
+/// `reqwest::ClientBuilder` per fetch and reqwest's `auto_sys_proxy`
+/// re-reads HTTP_PROXY / HTTPS_PROXY / NO_PROXY each time, so updating
+/// these env vars is sufficient to flip the proxy on/off live.
+///
+/// Returns the same human-readable summary `apply_proxy_env` produces
+/// for logging.
+#[tauri::command]
+fn set_proxy_env(config: proxy::ProxyConfig) -> String {
+    let summary = proxy::apply_proxy_env(&config);
+    eprintln!("[proxy] live update: {summary}");
+    summary
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -33,6 +50,29 @@ pub fn run() {
             if let Ok(dir) = app.path().resource_dir() {
                 commands::fs::set_resource_dir_hint(dir);
             }
+            // Apply user-configured global HTTP proxy by setting
+            // HTTP_PROXY / HTTPS_PROXY / NO_PROXY env vars BEFORE
+            // any HTTP request is made. tauri-plugin-http's reqwest
+            // client reads these on first construction. Lives next
+            // to the resource-dir hint so the proxy applies to
+            // everything: LLM, embedding, update check, deep
+            // research, captioning. See src-tauri/src/proxy.rs.
+            if let Ok(dir) = app.path().app_data_dir() {
+                let store_path = dir.join("app-state.json");
+                eprintln!("[proxy] reading from {}", store_path.display());
+                if let Some(cfg) = proxy::read_proxy_config_from_store(&store_path) {
+                    let summary = proxy::apply_proxy_env(&cfg);
+                    eprintln!("[proxy] {summary}");
+                } else {
+                    eprintln!("[proxy] no proxyConfig in store, requests go direct");
+                }
+            } else {
+                eprintln!("[proxy] could not resolve app_data_dir");
+            }
+            // Registry of running `claude` subprocesses, keyed by the
+            // frontend-generated stream id. Populated by claude_cli_spawn,
+            // drained on process exit or by claude_cli_kill.
+            app.manage(commands::claude_cli::ClaudeCliState::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -46,6 +86,7 @@ pub fn run() {
             commands::fs::find_related_wiki_pages,
             commands::fs::create_directory,
             commands::fs::file_exists,
+            commands::fs::read_file_as_base64,
             commands::project::create_project,
             commands::project::open_project,
             clip_server_status,
@@ -53,6 +94,20 @@ pub fn run() {
             commands::vectorstore::vector_search,
             commands::vectorstore::vector_delete,
             commands::vectorstore::vector_count,
+            commands::vectorstore::vector_upsert_chunks,
+            commands::vectorstore::vector_search_chunks,
+            commands::vectorstore::vector_delete_page,
+            commands::vectorstore::vector_count_chunks,
+            commands::vectorstore::vector_legacy_row_count,
+            commands::vectorstore::vector_drop_legacy,
+            commands::claude_cli::claude_cli_detect,
+            commands::claude_cli::claude_cli_spawn,
+            commands::claude_cli::claude_cli_kill,
+            commands::extract_images::extract_pdf_images_cmd,
+            commands::extract_images::extract_office_images_cmd,
+            commands::extract_images::extract_and_save_pdf_images_cmd,
+            commands::extract_images::extract_and_save_office_images_cmd,
+            set_proxy_env,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
