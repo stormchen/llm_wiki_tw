@@ -101,6 +101,7 @@
       "webSearch": "Web Search",
       "output": "Output",
       "interface": "Interface",
+      "integrations": "Integrations",
       "about": "About"
     },
     "sections": {
@@ -130,6 +131,12 @@
         "description": "UI language and appearance. Changes apply immediately and persist.",
         "uiLanguage": "UI Language",
         "uiLanguageHint": "Affects labels, buttons, and other UI strings only. The AI output language is set separately in Output Preferences."
+      },
+      "integrations": {
+        "title": "Integrations",
+        "description": "Configure third-party service integrations.",
+        "notionApiKey": "Notion API Key",
+        "notionApiKeyHint": "Your Notion Internal Integration Token. Required to import pages from Notion."
       },
       "about": {
         "title": "About",

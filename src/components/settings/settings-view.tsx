@@ -19,6 +19,7 @@ import { EmbeddingSection } from "./sections/embedding-section"
 import { WebSearchSection } from "./sections/web-search-section"
 import { OutputSection } from "./sections/output-section"
 import { InterfaceSection } from "./sections/interface-section"
+import { IntegrationsSection } from "./sections/integrations-section"
 import { AboutSection } from "./sections/about-section"
 
 type CategoryId =
@@ -27,6 +28,7 @@ type CategoryId =
   | "web-search"
   | "output"
   | "interface"
+  | "integrations"
   | "about"
 
 interface Category {
@@ -38,12 +40,15 @@ interface Category {
   icon: typeof Bot
 }
 
+import { Plug } from "lucide-react"
+
 const CATEGORIES: Category[] = [
   { id: "llm", labelKey: "settings.categories.llm", icon: Bot },
   { id: "embedding", labelKey: "settings.categories.embedding", icon: Binary },
   { id: "web-search", labelKey: "settings.categories.webSearch", icon: Globe },
   { id: "output", labelKey: "settings.categories.output", icon: Languages },
   { id: "interface", labelKey: "settings.categories.interface", icon: Palette },
+  { id: "integrations", labelKey: "settings.categories.integrations", icon: Plug },
   { id: "about", labelKey: "settings.categories.about", icon: Info },
 ]
 
@@ -54,6 +59,7 @@ function initialDraft(
   outputLanguage: ReturnType<typeof useWikiStore.getState>["outputLanguage"],
   maxHistoryMessages: number,
   uiLanguage: string,
+  notionApiKey: string,
 ): SettingsDraft {
   return {
     provider: llm.provider,
@@ -72,6 +78,7 @@ function initialDraft(
     outputLanguage,
     maxHistoryMessages,
     uiLanguage,
+    notionApiKey,
   }
 }
 
@@ -85,6 +92,7 @@ export function SettingsView() {
   const setEmbeddingConfig = useWikiStore((s) => s.setEmbeddingConfig)
   const outputLanguage = useWikiStore((s) => s.outputLanguage)
   const setOutputLanguage = useWikiStore((s) => s.setOutputLanguage)
+  const notionApiKey = useWikiStore((s) => s.notionApiKey)
   const maxHistoryMessages = useChatStore((s) => s.maxHistoryMessages)
   const setMaxHistoryMessages = useChatStore((s) => s.setMaxHistoryMessages)
 
@@ -98,6 +106,7 @@ export function SettingsView() {
       outputLanguage,
       maxHistoryMessages,
       i18n.language,
+      notionApiKey,
     ),
   )
 
@@ -111,6 +120,7 @@ export function SettingsView() {
         outputLanguage,
         maxHistoryMessages,
         i18n.language,
+        notionApiKey,
       ),
     )
   }, [
@@ -119,6 +129,7 @@ export function SettingsView() {
     embeddingConfig,
     outputLanguage,
     maxHistoryMessages,
+    notionApiKey,
   ])
 
   const setDraft: DraftSetter = useCallback((key, value) => {
@@ -159,6 +170,9 @@ export function SettingsView() {
     setOutputLanguage(draft.outputLanguage as typeof outputLanguage)
     await saveOutputLanguage(draft.outputLanguage as typeof outputLanguage)
     setMaxHistoryMessages(draft.maxHistoryMessages)
+    const { saveNotionApiKey } = await import("@/lib/project-store")
+    useWikiStore.getState().setNotionApiKey(draft.notionApiKey)
+    await saveNotionApiKey(draft.notionApiKey)
 
     if (draft.uiLanguage !== i18n.language) {
       await i18n.changeLanguage(draft.uiLanguage)
@@ -192,6 +206,8 @@ export function SettingsView() {
         return <OutputSection draft={draft} setDraft={setDraft} />
       case "interface":
         return <InterfaceSection draft={draft} setDraft={setDraft} />
+      case "integrations":
+        return <IntegrationsSection draft={draft} setDraft={setDraft} />
       case "about":
         return <AboutSection />
     }

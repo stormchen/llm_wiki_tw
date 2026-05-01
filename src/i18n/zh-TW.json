@@ -101,6 +101,7 @@
       "webSearch": "網路搜尋",
       "output": "輸出偏好",
       "interface": "介面",
+      "integrations": "整合",
       "about": "關於"
     },
     "sections": {
@@ -130,6 +131,12 @@
         "description": "介面語言與外觀樣式。切換後立即生效並持久化。",
         "uiLanguage": "UI 語言",
         "uiLanguageHint": "只影響按鈕、標籤等 UI 文字，不影響 AI 輸出語言（那個在「輸出偏好」裡單獨設定）。"
+      },
+      "integrations": {
+        "title": "整合",
+        "description": "設定第三方服務整合。",
+        "notionApiKey": "Notion API 金鑰",
+        "notionApiKeyHint": "你的 Notion 內部整合權杖 (Internal Integration Token)。用於匯入 Notion 頁面。"
       },
       "about": {
         "title": "關於",

@@ -89,6 +89,7 @@ interface WikiState {
   searchApiConfig: SearchApiConfig
   embeddingConfig: EmbeddingConfig
   outputLanguage: OutputLanguage
+  notionApiKey: string
   dataVersion: number
 
   setProject: (project: WikiProject | null) => void
@@ -103,6 +104,7 @@ interface WikiState {
   setSearchApiConfig: (config: SearchApiConfig) => void
   setEmbeddingConfig: (config: EmbeddingConfig) => void
   setOutputLanguage: (lang: OutputLanguage) => void
+  setNotionApiKey: (key: string) => void
   bumpDataVersion: () => void
 }
 
@@ -145,6 +147,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   },
 
   outputLanguage: "auto",
+  notionApiKey: "",
 
   setLlmConfig: (llmConfig) => set({ llmConfig }),
   setProviderConfigs: (providerConfigs) => set({ providerConfigs }),
@@ -152,6 +155,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   setSearchApiConfig: (searchApiConfig) => set({ searchApiConfig }),
   setEmbeddingConfig: (embeddingConfig) => set({ embeddingConfig }),
   setOutputLanguage: (outputLanguage) => set({ outputLanguage }),
+  setNotionApiKey: (notionApiKey) => set({ notionApiKey }),
   bumpDataVersion: () => set((state) => ({ dataVersion: state.dataVersion + 1 })),
 }))
 

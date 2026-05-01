@@ -20,6 +20,8 @@ import {
 } from "@/lib/wiki-cleanup"
 import { parseSources, writeSources } from "@/lib/sources-merge"
 import { decidePageFate } from "@/lib/source-delete-decision"
+import { NotionImportDialog } from "./notion-import-dialog"
+import { importFromNotion } from "@/lib/notion-import"
 
 export function SourcesView() {
   const { t } = useTranslation()
@@ -34,6 +36,8 @@ export function SourcesView() {
   const [sources, setSources] = useState<FileNode[]>([])
   const [importing, setImporting] = useState(false)
   const [ingestingPath, setIngestingPath] = useState<string | null>(null)
+  const [notionDialogOpen, setNotionDialogOpen] = useState(false)
+  const notionApiKey = useWikiStore((s) => s.notionApiKey)
 
   const loadSources = useCallback(async () => {
     if (!project) return
@@ -51,6 +55,30 @@ export function SourcesView() {
   useEffect(() => {
     loadSources()
   }, [loadSources])
+
+  async function handleNotionImport(url: string) {
+    if (!project) return
+    if (!notionApiKey) {
+      throw new Error("Please set your Notion API Key in Settings > Integrations first.")
+    }
+    
+    setImporting(true)
+    const pp = normalizePath(project.path)
+    
+    try {
+      const { path } = await importFromNotion(pp, url, notionApiKey)
+      await loadSources()
+      
+      // Enqueue for serial ingest
+      if (llmConfig.apiKey || llmConfig.provider === "ollama" || llmConfig.provider === "custom") {
+        enqueueIngest(project.id, path).catch((err) =>
+          console.error(`Failed to enqueue ingest:`, err)
+        )
+      }
+    } finally {
+      setImporting(false)
+    }
+  }
 
   async function handleImport() {
     if (!project) return
@@ -375,6 +403,10 @@ export function SourcesView() {
             <Plus className="mr-1 h-4 w-4" />
             {t("sources.importFolder", "Folder")}
           </Button>
+          <Button size="sm" onClick={() => setNotionDialogOpen(true)} disabled={importing}>
+            <Plus className="mr-1 h-4 w-4" />
+            Notion
+          </Button>
         </div>
       </div>
 
@@ -391,6 +423,10 @@ export function SourcesView() {
               <Button variant="outline" size="sm" onClick={handleImportFolder}>
                 <Plus className="mr-1 h-4 w-4" />
                 Folder
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setNotionDialogOpen(true)}>
+                <Plus className="mr-1 h-4 w-4" />
+                Notion
               </Button>
             </div>
           </div>
@@ -411,6 +447,12 @@ export function SourcesView() {
       <div className="border-t px-4 py-2 text-xs text-muted-foreground">
         {t("sources.sourceCount", { count: countFiles(sources) })}
       </div>
+
+      <NotionImportDialog
+        open={notionDialogOpen}
+        onOpenChange={setNotionDialogOpen}
+        onImport={handleNotionImport}
+      />
     </div>
   )
 }

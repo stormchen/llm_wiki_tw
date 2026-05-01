@@ -129,6 +129,18 @@ export async function loadOutputLanguage(): Promise<OutputLanguage | null> {
   return (await store.get<OutputLanguage>(OUTPUT_LANGUAGE_KEY)) ?? null
 }
 
+const NOTION_API_KEY = "notionApiKey"
+
+export async function saveNotionApiKey(key: string): Promise<void> {
+  const store = await getStore()
+  await store.set(NOTION_API_KEY, key)
+}
+
+export async function loadNotionApiKey(): Promise<string | null> {
+  const store = await getStore()
+  return (await store.get<string>(NOTION_API_KEY)) ?? null
+}
+
 // ── Update-check persistence ──────────────────────────────────────────────
 // Small slice of state the UI-layer update store hydrates from on boot.
 // Only fields that should persist across launches: the user's "enable

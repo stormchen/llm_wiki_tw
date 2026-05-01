@@ -101,6 +101,7 @@
       "webSearch": "网页搜索",
       "output": "输出偏好",
       "interface": "界面",
+      "integrations": "整合",
       "about": "关于"
     },
     "sections": {
@@ -130,6 +131,12 @@
         "description": "界面语言和外观样式。切换后立即生效并持久化。",
         "uiLanguage": "UI 语言",
         "uiLanguageHint": "只影响按钮、标签这些 UI 文案,不影响 AI 输出语言(那个在\"输出偏好\"里单独设置)。"
+      },
+      "integrations": {
+        "title": "整合",
+        "description": "配置第三方服务整合。",
+        "notionApiKey": "Notion API 密钥",
+        "notionApiKeyHint": "你的 Notion 内部集成令牌 (Internal Integration Token)。用于导入 Notion 页面。"
       },
       "about": {
         "title": "关于",

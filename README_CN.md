@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> | 中文
+  <a href="README.md">English</a> | 简体中文 | <a href="README_TW.md">繁體中文</a>
 </p>
 
 ---
@@ -40,6 +40,7 @@
 - **深度研究** — LLM 智能生成搜索主题，多查询网络搜索，研究结果自动摄入 Wiki
 - **异步审核系统** — LLM 在摄入时标记需人工判断的项，预定义操作，预生成搜索查询
 - **Chrome 网页剪藏** — 一键捕获网页内容，自动摄入知识库
+- **Notion 整合** — 将 Notion 页面直接导入为 Markdown 格式，并无缝摄入你的知识库
 
 ## 这是什么？
 
@@ -388,6 +389,12 @@ npm run tauri build    # 生产构建
 2. 启用「开发者模式」
 3. 点击「加载已解压的扩展程序」
 4. 选择 `extension/` 目录
+
+### Notion 导入
+
+1. 进入 **设置 > 整合** 并添加你的 Notion Internal Integration Token。
+2. 打开 **资料源** 选项卡，点击 **Notion**，然后粘贴你的 Notion 页面 URL。
+3. 页面将自动转换为 Markdown 并加入队列以摄入你的知识库。
 
 ## 快速开始
 

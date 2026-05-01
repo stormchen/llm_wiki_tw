@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  English | <a href="README_CN.md">中文</a>
+  English | <a href="README_CN.md">简体中文</a> | <a href="README_TW.md">繁體中文</a>
 </p>
 
 ---
@@ -40,6 +40,7 @@
 - **Deep Research** — LLM-optimized search topics, multi-query web search, auto-ingest results into wiki
 - **Async Review System** — LLM flags items for human judgment, predefined actions, pre-generated search queries
 - **Chrome Web Clipper** — one-click web page capture with auto-ingest into knowledge base
+- **Notion Integration** — direct import of Notion pages into markdown format, seamlessly synced to your knowledge base
 
 ## What is this?
 
@@ -388,6 +389,12 @@ npm run tauri build    # Production build
 2. Enable "Developer mode"
 3. Click "Load unpacked"
 4. Select the `extension/` directory
+
+### Notion Import
+
+1. Go to **Settings > Integrations** and add your Notion Internal Integration Token.
+2. Open the **Sources** tab, click **Notion**, and paste your Notion page URL.
+3. The page will be automatically converted to Markdown and queued for ingestion into your knowledge base.
 
 ## Quick Start
 

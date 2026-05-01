@@ -32,6 +32,9 @@ export interface SettingsDraft {
 
   // UI
   uiLanguage: string
+
+  // Integrations
+  notionApiKey: string
 }
 
 export type DraftSetter = <K extends keyof SettingsDraft>(
