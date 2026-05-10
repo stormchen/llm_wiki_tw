@@ -3,6 +3,7 @@ mod commands;
 mod panic_guard;
 mod proxy;
 mod types;
+mod web_chat;
 
 use panic_guard::run_guarded;
 
@@ -66,6 +67,8 @@ pub fn run() {
                 } else {
                     eprintln!("[proxy] no proxyConfig in store, requests go direct");
                 }
+                // 啟動 Web Chat Server（Port 19828）
+                web_chat::start_web_chat_server(dir);
             } else {
                 eprintln!("[proxy] could not resolve app_data_dir");
             }

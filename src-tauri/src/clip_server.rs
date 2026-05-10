@@ -16,6 +16,11 @@ const MAX_RESTART_RETRIES: u32 = 10;
 const BIND_RETRY_DELAY_SECS: u64 = 2;
 const RESTART_DELAY_SECS: u64 = 5;
 
+/// 供 web_chat.rs 查詢目前開啟的 Wiki 專案路徑
+pub fn get_current_project() -> String {
+    CURRENT_PROJECT.lock().unwrap_or_else(|p| p.into_inner()).clone()
+}
+
 /// Get current daemon status as a string
 pub fn get_daemon_status() -> &'static str {
     match DAEMON_STATUS.load(Ordering::Relaxed) {
