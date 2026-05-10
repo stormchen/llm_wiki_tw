@@ -34,16 +34,36 @@ fn read_llm_settings() -> Option<LlmSettings> {
     let content = std::fs::read_to_string(&path).ok()?;
     let json: serde_json::Value = serde_json::from_str(&content).ok()?;
     let cfg = &json["llmConfig"];
-    Some(LlmSettings {
-        provider: cfg["provider"].as_str().unwrap_or("ollama").to_string(),
-        api_key: cfg["apiKey"].as_str().unwrap_or("").to_string(),
-        model: cfg["model"].as_str().unwrap_or("").to_string(),
-        ollama_url: cfg["ollamaUrl"]
-            .as_str()
-            .unwrap_or("http://localhost:11434")
-            .to_string(),
-        custom_endpoint: cfg["customEndpoint"].as_str().unwrap_or("").to_string(),
-    })
+
+    let provider = cfg["provider"].as_str().unwrap_or("ollama").to_string();
+    let mut api_key = cfg["apiKey"].as_str().unwrap_or("").to_string();
+    let mut model = cfg["model"].as_str().unwrap_or("").to_string();
+    let mut ollama_url = cfg["ollamaUrl"]
+        .as_str()
+        .unwrap_or("http://localhost:11434")
+        .to_string();
+    let mut custom_endpoint = cfg["customEndpoint"].as_str().unwrap_or("").to_string();
+
+    // 讀取 activePresetId，並從 providerConfigs 合併覆蓋值
+    if let Some(preset_id) = json["activePresetId"].as_str() {
+        if let Some(preset) = json["providerConfigs"][preset_id].as_object() {
+            if let Some(k) = preset.get("apiKey").and_then(|v| v.as_str()) {
+                if !k.is_empty() { api_key = k.to_string(); }
+            }
+            if let Some(m) = preset.get("model").and_then(|v| v.as_str()) {
+                if !m.is_empty() { model = m.to_string(); }
+            }
+            // Ollama/custom 的 base URL 存在 baseUrl 欄位
+            if let Some(u) = preset.get("baseUrl").and_then(|v| v.as_str()) {
+                if !u.is_empty() {
+                    ollama_url = u.to_string();
+                    custom_endpoint = u.to_string();
+                }
+            }
+        }
+    }
+
+    Some(LlmSettings { provider, api_key, model, ollama_url, custom_endpoint })
 }
 
 // ── Wiki 搜尋 ─────────────────────────────────────────────────────
@@ -52,21 +72,47 @@ use crate::clip_server::get_current_project;
 
 fn search_wiki(query: &str) -> Vec<String> {
     let project_path = get_current_project();
+    eprintln!("[WebChat] search_wiki: project_path={:?}, query={:?}", project_path, query);
     if project_path.is_empty() {
+        eprintln!("[WebChat] CURRENT_PROJECT is empty! Has the user opened a project in the app?");
         return vec![];
     }
     let wiki_dir = Path::new(&project_path).join("wiki");
-    let keywords: Vec<String> = query
-        .split_whitespace()
-        .map(|w| w.to_lowercase())
-        .filter(|w| w.len() > 1)
-        .collect();
-    if keywords.is_empty() {
-        return vec![];
+    eprintln!("[WebChat] scanning wiki_dir: {:?}", wiki_dir);
+
+    // 支援中文分詞：英文用空白分割，中文用 CJK 字元二元組拆分
+    let mut keywords: Vec<String> = vec![];
+    for word in query.split_whitespace() {
+        let word_lower = word.to_lowercase();
+        let chars: Vec<char> = word_lower.chars().collect();
+        let has_cjk = chars.iter().any(|c| {
+            (*c as u32) >= 0x4E00 && (*c as u32) <= 0x9FFF
+        });
+        if has_cjk {
+            // CJK 二元組（bigram）
+            for i in 0..chars.len().saturating_sub(1) {
+                let bigram: String = chars[i..=i+1].iter().collect();
+                keywords.push(bigram);
+            }
+            // 單字也加入
+            for c in &chars {
+                if (*c as u32) >= 0x4E00 && (*c as u32) <= 0x9FFF {
+                    keywords.push(c.to_string());
+                }
+            }
+        } else if word_lower.len() > 2 {
+            keywords.push(word_lower);
+        }
     }
+    // 如果分詞結果為空，直接用整個 query 作為關鍵字
+    if keywords.is_empty() {
+        keywords.push(query.to_lowercase());
+    }
+    eprintln!("[WebChat] keywords: {:?}", keywords);
 
     let mut results: Vec<(usize, String)> = vec![];
     collect_md_files(&wiki_dir, &keywords, &mut results);
+    eprintln!("[WebChat] matched {} files", results.len());
     results.sort_by(|a, b| b.0.cmp(&a.0));
     results
         .into_iter()
@@ -107,14 +153,15 @@ fn build_llm_request(settings: &LlmSettings, system: &str, user_msg: &str) -> (S
     match settings.provider.as_str() {
         "ollama" => {
             let base = settings.ollama_url.trim_end_matches('/');
+            // 去除尾部的 /v1，統一補上完整路徑
+            let base = base.trim_end_matches("/v1");
             let url = format!("{}/v1/chat/completions", base);
-            let headers = r#"{"Content-Type":"application/json"}"#.to_string();
+            let headers = r#"{"Content-Type":"application/json","Origin":"http://localhost"}"#.to_string();
             let body = serde_json::json!({
                 "model": settings.model,
                 "messages": messages,
                 "stream": true
-            })
-            .to_string();
+            }).to_string();
             (url, headers, body)
         }
         "anthropic" => {
@@ -123,16 +170,36 @@ fn build_llm_request(settings: &LlmSettings, system: &str, user_msg: &str) -> (S
                 "Content-Type": "application/json",
                 "x-api-key": settings.api_key,
                 "anthropic-version": "2023-06-01"
-            })
-            .to_string();
+            }).to_string();
             let body = serde_json::json!({
                 "model": settings.model,
                 "max_tokens": 4096,
                 "stream": true,
                 "system": system,
                 "messages": [{"role": "user", "content": user_msg}]
-            })
-            .to_string();
+            }).to_string();
+            (url, headers, body)
+        }
+        "google" => {
+            // Google Gemini API（SSE 格式）
+            let encoded_model = settings.model.replace('/', "%2F");
+            let url = format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse",
+                encoded_model
+            );
+            let headers = serde_json::json!({
+                "Content-Type": "application/json",
+                "x-goog-api-key": settings.api_key
+            }).to_string();
+            let body = serde_json::json!({
+                "systemInstruction": {
+                    "parts": [{"text": system}]
+                },
+                "contents": [{
+                    "role": "user",
+                    "parts": [{"text": user_msg}]
+                }]
+            }).to_string();
             (url, headers, body)
         }
         _ => {
@@ -150,14 +217,12 @@ fn build_llm_request(settings: &LlmSettings, system: &str, user_msg: &str) -> (S
             let headers = serde_json::json!({
                 "Content-Type": "application/json",
                 "Authorization": format!("Bearer {}", settings.api_key)
-            })
-            .to_string();
+            }).to_string();
             let body = serde_json::json!({
                 "model": settings.model,
                 "messages": messages,
                 "stream": true
-            })
-            .to_string();
+            }).to_string();
             (url, headers, body)
         }
     }
@@ -173,14 +238,28 @@ fn parse_sse_token(line: &str, provider: &str) -> Option<String> {
         return None;
     }
     let v: serde_json::Value = serde_json::from_str(data).ok()?;
-    if provider == "anthropic" {
-        if v["type"].as_str()? == "content_block_delta" {
-            return Some(v["delta"]["text"].as_str()?.to_string());
+    match provider {
+        "anthropic" => {
+            if v["type"].as_str()? == "content_block_delta" {
+                return Some(v["delta"]["text"].as_str()?.to_string());
+            }
+            None
         }
-        return None;
+        "google" => {
+            // Gemini SSE 格式：candidates[0].content.parts[]
+            let parts = v["candidates"][0]["content"]["parts"].as_array()?;
+            let text: String = parts.iter()
+                .filter(|p| !p["thought"].as_bool().unwrap_or(false))
+                .filter_map(|p| p["text"].as_str())
+                .collect();
+            if text.is_empty() { None } else { Some(text) }
+        }
+        _ => {
+            // OpenAI wire（ollama / openai / custom）
+            let content = v["choices"][0]["delta"]["content"].as_str()?;
+            Some(content.to_string())
+        }
     }
-    // OpenAI wire（ollama / openai / custom）
-    Some(v["choices"][0]["delta"]["content"].as_str()?.to_string())
 }
 
 /// 用 reqwest blocking 呼叫 LLM 並將 SSE token 逐字寫入 stream，傳回完整文字
