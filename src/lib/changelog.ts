@@ -26,6 +26,37 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.17",
+    date: "2026-05-30",
+    highlights: {
+      en: [
+        "Knowledge Graph search: a new search control in the graph view lets you find and highlight nodes by name, with keyboard navigation and animated flyover to matching nodes.",
+        "Ollama web search: Ollama models can now act as a search provider for Chat and Deep Research without needing an external API key.",
+        "SearXNG self-hosted search: configure your own SearXNG instance as a web search source with selectable category filters.",
+        "Knowledge Tree new page types: Finding, Thesis, and Methodology pages are now supported as first-class wiki page types.",
+        "Sources view overhaul: two-stage inline delete confirmation (arm/confirm), virtual-scroll for large source trees, and a rescan button to sync external filesystem changes.",
+        "Chat input redesign: web search and AnyTXT toggles now appear inside the chat input box for faster access.",
+        "Mermaid diagram rendering fix: diagrams no longer re-render or flash during active LLM streaming.",
+        "API server replaces internal web chat server for a more robust and configurable local API with access token support.",
+        "Various stability and performance improvements inherited from upstream v0.4.7–v0.4.16.",
+        "Notion integration preserved: import Notion pages via Settings → Integrations → Notion API Key.",
+      ],
+      zh: [
+        "知識圖譜搜尋：圖譜視圖新增搜尋控件，可按名稱找到並高亮節點，支援鍵盤導航與動畫定位。",
+        "Ollama 網頁搜尋：Ollama 模型現在可作為 AI 對話和深度研究的搜尋 Provider，無需外部 API 金鑰。",
+        "SearXNG 自建搜尋：可設定自建的 SearXNG 實例作為網頁搜尋來源，並可選擇搜尋類別。",
+        "知識樹新頁面類型：新增 Finding（發現）、Thesis（論點）、Methodology（方法論）三種 Wiki 頁面類型。",
+        "原始資料側邊欄改進：兩段式確認刪除（點一下 Arm，再點確認），大型資料夾虛擬滾動，以及手動重新整理外部檔案系統變更。",
+        "聊天輸入列重新設計：網頁搜尋與 AnyTXT 開關整合在輸入框內，操作更快捷。",
+        "Mermaid 圖表渲染修正：AI 串流輸出期間圖表不再重複渲染或閃爍。",
+        "API 伺服器取代舊版 Web Chat Server，提供更強大的本機 API，支援存取 Token 控制。",
+        "繼承 upstream v0.4.7–v0.4.16 的多項穩定性與效能改進。",
+        "保留 Notion 整合：可透過 設定 → 整合 → Notion API 金鑰 匯入 Notion 頁面。",
+      ],
+    },
+  },
+  {
+
     version: "0.4.16",
     date: "2026-05-29",
     highlights: {

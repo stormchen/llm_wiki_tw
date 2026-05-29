@@ -170,7 +170,6 @@ export function ChatInput({ onSend, onStop, isStreaming, anyTxtAvailable = true,
           )}
         </div>
       </div>
->>>>>>> upstream/main
     </div>
   )
 }

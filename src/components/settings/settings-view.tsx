@@ -190,11 +190,8 @@ export function SettingsView() {
       apiConfig,
       maxHistoryMessages,
       i18n.language,
-<<<<<<< HEAD
       notionApiKey,
-=======
-      project?.path,
->>>>>>> upstream/main
+      project?.path ?? "",
     ),
   )
 
@@ -237,7 +234,8 @@ export function SettingsView() {
         apiConfig,
         maxHistoryMessages,
         prev.uiLanguage,
-        project?.path,
+        notionApiKey,
+        project?.path ?? "",
       ),
     )
   }, [

@@ -13,7 +13,6 @@ import { decideDeleteClick } from "@/lib/sources-tree-delete"
 import { rescanProjectFileSync } from "@/lib/project-file-sync"
 import { NotionImportDialog } from "./notion-import-dialog"
 import { importFromNotion } from "@/lib/notion-import"
-import { removeFromIngestCache } from "@/lib/ingest-cache"
 import {
   deleteSourceFile,
   deleteSourceFolder,
@@ -114,7 +113,7 @@ export function SourcesView() {
       
       // Enqueue for serial ingest
       if (llmConfig.apiKey || llmConfig.provider === "ollama" || llmConfig.provider === "custom") {
-        enqueueIngest(project.id, path).catch((err) =>
+        enqueueSourceIngest(project, [path], llmConfig).catch((err: unknown) =>
           console.error(`Failed to enqueue ingest:`, err)
         )
       }
