@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useMemo } from "react"
+import { memo, useCallback, useEffect, useRef, useState, useMemo } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
@@ -7,12 +7,13 @@ import "katex/dist/katex.min.css"
 import {
   Bot, User, FileText, BookmarkPlus, ChevronDown, ChevronRight, RefreshCw, Copy, Check,
   Users, Lightbulb, BookOpen, HelpCircle, GitMerge, BarChart3, Layout, Globe,
-  Image as ImageIcon,
+  TrendingUp, Target, Image as ImageIcon, FileSearch,
 } from "lucide-react"
+import { openUrl } from "@tauri-apps/plugin-opener"
 import { useWikiStore } from "@/stores/wiki-store"
 import { readFile, writeFile, listDirectory } from "@/commands/fs"
 import { lastQueryPages } from "@/components/chat/chat-panel"
-import type { DisplayMessage } from "@/stores/chat-store"
+import type { DisplayMessage, MessageReference } from "@/stores/chat-store"
 import type { FileNode } from "@/types/wiki"
 
 import { convertLatexToUnicode } from "@/lib/latex-to-unicode"
@@ -21,6 +22,10 @@ import { makeQueryFileName } from "@/lib/wiki-filename"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { resolveMarkdownImageSrc } from "@/lib/markdown-image-resolver"
 import { findRawSourceForImage, imageUrlToAbsolute } from "@/lib/raw-source-resolver"
+import { detectLanguage } from "@/lib/detect-language"
+import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
+import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
+import { inferWikiTypeFromPath } from "@/lib/wiki-page-types"
 
 // Module-level cache of source file names
 let cachedSourceFiles: string[] = []
@@ -61,7 +66,7 @@ interface ChatMessageProps {
   onRegenerate?: () => void
 }
 
-export function ChatMessage({ message, isLastAssistant, onRegenerate }: ChatMessageProps) {
+function ChatMessageImpl({ message, isLastAssistant, onRegenerate }: ChatMessageProps) {
   const isUser = message.role === "user"
   const isSystem = message.role === "system"
   const isAssistant = message.role === "assistant"
@@ -93,7 +98,7 @@ export function ChatMessage({ message, isLastAssistant, onRegenerate }: ChatMess
           }`}
         >
           {isUser ? (
-            <p className="whitespace-pre-wrap break-words">{message.content}</p>
+            <p dir="auto" className="whitespace-pre-wrap break-words">{message.content}</p>
           ) : (
             <MarkdownContent content={message.content} />
           )}
@@ -119,6 +124,12 @@ export function ChatMessage({ message, isLastAssistant, onRegenerate }: ChatMess
     </div>
   )
 }
+
+export const ChatMessage = memo(ChatMessageImpl, (prev, next) =>
+  prev.message === next.message
+  && prev.isLastAssistant === next.isLastAssistant
+  && prev.onRegenerate === next.onRegenerate
+)
 
 function CopyButton({ content }: { content: string }) {
   const [copied, setCopied] = useState(false)
@@ -261,10 +272,7 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
   )
 }
 
-interface CitedPage {
-  title: string
-  path: string
-}
+type CitedPage = MessageReference
 
 const REF_TYPE_CONFIG: Record<string, { icon: typeof FileText; color: string }> = {
   entity: { icon: Users, color: "text-blue-500" },
@@ -273,20 +281,38 @@ const REF_TYPE_CONFIG: Record<string, { icon: typeof FileText; color: string }> 
   query: { icon: HelpCircle, color: "text-green-500" },
   synthesis: { icon: GitMerge, color: "text-red-500" },
   comparison: { icon: BarChart3, color: "text-teal-500" },
+  finding: { icon: TrendingUp, color: "text-purple-500" },
+  thesis: { icon: Target, color: "text-rose-500" },
+  methodology: { icon: BookOpen, color: "text-teal-500" },
   overview: { icon: Layout, color: "text-yellow-500" },
   clip: { icon: Globe, color: "text-blue-400" },
+  external: { icon: Globe, color: "text-sky-500" },
+  anytxt: { icon: FileSearch, color: "text-emerald-500" },
 }
 
-function getRefType(path: string): string {
-  if (path.includes("/entities/")) return "entity"
-  if (path.includes("/concepts/")) return "concept"
-  if (path.includes("/sources/")) return "source"
-  if (path.includes("/queries/")) return "query"
-  if (path.includes("/synthesis/")) return "synthesis"
-  if (path.includes("/comparisons/")) return "comparison"
-  if (path.includes("overview")) return "overview"
+function getRefType(path: string, page?: CitedPage): string {
+  if (page?.kind === "external") {
+    return page.source?.toLowerCase() === "anytxt" ? "anytxt" : "external"
+  }
   if (path.includes("raw/sources/")) return "clip"
-  return "source"
+  return inferWikiTypeFromPath(path) ?? "source"
+}
+
+function displayExternalPath(page: CitedPage): string {
+  const raw = page.url || page.path
+  if (!raw) return page.path
+  if (raw.startsWith("file://")) {
+    try {
+      const url = new URL(raw)
+      const decoded = decodeURIComponent(url.pathname)
+      if (/^\/[A-Za-z]:\//.test(decoded)) return decoded.slice(1)
+      if (url.hostname) return `//${url.hostname}${decoded}`
+      return decoded
+    } catch {
+      return raw.replace(/^file:\/\//, "")
+    }
+  }
+  return raw
 }
 
 /**
@@ -313,6 +339,7 @@ function CitedReferencesPanel({ content, savedReferences }: { content: string; s
   const project = useWikiStore((s) => s.project)
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
   const setFileContent = useWikiStore((s) => s.setFileContent)
+  const setExternalPreview = useWikiStore((s) => s.setExternalPreview)
   const setPendingScrollImageSrc = useWikiStore((s) => s.setPendingScrollImageSrc)
   const [expanded, setExpanded] = useState(false)
   /**
@@ -344,6 +371,9 @@ function CitedReferencesPanel({ content, savedReferences }: { content: string; s
         // Try the path verbatim first, then the same fallback set
         // the click-handler uses below — keeps "is the file on
         // disk" check consistent across the panel.
+        if (page.kind === "external") {
+          return [page.path, { count: 0, firstUrl: null }] as const
+        }
         const id = getFileName(page.path.replace(/^wiki\//, "").replace(/\.md$/, ""))
         const candidates = [
           `${pp}/${page.path}`,
@@ -448,12 +478,45 @@ function CitedReferencesPanel({ content, savedReferences }: { content: string; s
       </button>
       <div className="px-2 pb-1.5">
         {visiblePages.map((page, i) => {
-          const refType = getRefType(page.path)
+          const refType = getRefType(page.path, page)
           const config = REF_TYPE_CONFIG[refType] ?? REF_TYPE_CONFIG.source
           const Icon = config.icon
           const info = imageInfos[page.path]
           const hasImages = (info?.count ?? 0) > 0
           const openCitedPage = async () => {
+            if (page.kind === "external") {
+              const target = page.url || page.path
+              if (page.source?.toLowerCase() === "anytxt") {
+                const displayPath = displayExternalPath(page)
+                const previewPath = `anytxt-preview://${encodeURIComponent(target || page.title)}`
+                const previewContent = [
+                  `# ${page.title}`,
+                  "",
+                  `**Source:** ${page.source ?? "AnyTXT"}`,
+                  `**Path:** ${displayPath}`,
+                  "",
+                  "## Preview",
+                  "",
+                  page.snippet?.trim() || "(No fragment returned by AnyTXT.)",
+                ].join("\n")
+                setSelectedFile(previewPath)
+                setFileContent(previewContent)
+                setExternalPreview({
+                  title: page.title,
+                  path: previewPath,
+                  source: page.source ?? "AnyTXT",
+                  url: displayPath,
+                  snippet: page.snippet ?? "",
+                })
+                return
+              }
+              if (target) {
+                await openUrl(target).catch((err) => {
+                  console.warn("[chat refs] failed to open external reference:", err)
+                })
+              }
+              return
+            }
             if (!project) return
             const pp = normalizePath(project.path)
             const id = getFileName(page.path.replace(/^wiki\//, "").replace(/\.md$/, ""))
@@ -487,7 +550,7 @@ function CitedReferencesPanel({ content, savedReferences }: { content: string; s
             <div
               key={page.path}
               className="flex w-full items-center gap-1.5 rounded text-left"
-              title={page.path}
+              title={page.kind === "external" ? `${page.source ?? "External"}: ${page.url ?? page.path}` : page.path}
             >
               <span className="text-[10px] text-muted-foreground/60 w-4 shrink-0 text-right">[{i + 1}]</span>
               {/*
@@ -520,7 +583,19 @@ function CitedReferencesPanel({ content, savedReferences }: { content: string; s
                 className="flex min-w-0 flex-1 items-center gap-1.5 rounded px-1 py-0.5 text-left hover:bg-accent/50 transition-colors"
               >
                 <Icon className={`h-3 w-3 shrink-0 ${config.color}`} />
-                <span className="truncate text-foreground/80">{page.title}</span>
+                <span className="min-w-0 flex-1 truncate text-foreground/80">
+                  {page.title}
+                  {page.kind === "external" && page.source?.toLowerCase() === "anytxt" && (
+                    <span className="mt-0.5 block truncate text-[10px] text-muted-foreground/75">
+                      {displayExternalPath(page)}
+                    </span>
+                  )}
+                </span>
+                {page.kind === "external" && page.source && (
+                  <span className="shrink-0 rounded bg-background/80 px-1 py-0 text-[10px] text-muted-foreground">
+                    {page.source}
+                  </span>
+                )}
               </button>
             </div>
           )
@@ -653,11 +728,19 @@ function MarkdownContent({ content }: { content: string }) {
   // Separate thinking blocks from main content
   const { thinking, answer } = useMemo(() => separateThinking(cleaned), [cleaned])
   const processed = useMemo(() => processContent(answer), [answer])
+  const renderLanguage = useMemo(() => detectLanguage(answer), [answer])
+  const direction = getTextDirection(renderLanguage)
+  const htmlLang = getHtmlLang(renderLanguage)
 
   return (
     <div>
       {thinking && <ThinkingBlock content={thinking} />}
-      <div className="chat-markdown prose prose-sm max-w-none dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-2 prose-code:text-xs prose-code:before:content-none prose-code:after:content-none">
+      <div
+        className="chat-markdown prose prose-sm max-w-none dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-2 prose-code:text-xs prose-code:before:content-none prose-code:after:content-none"
+        dir={direction}
+        lang={htmlLang}
+        style={{ textAlign: "start" }}
+      >
         <ReactMarkdown
           remarkPlugins={[remarkGfm, remarkMath]}
           rehypePlugins={[rehypeKatex]}
@@ -691,14 +774,33 @@ function MarkdownContent({ content }: { content: string }) {
               <thead className="bg-muted" {...props}>{children}</thead>
             ),
             th: ({ children, ...props }) => (
-              <th className="border border-border/80 px-3 py-1.5 text-left font-semibold bg-muted" {...props}>{children}</th>
+              <th className="border border-border/80 px-3 py-1.5 text-start font-semibold bg-muted" {...props}>{children}</th>
             ),
             td: ({ children, ...props }) => (
               <td className="border border-border/60 px-3 py-1.5" {...props}>{children}</td>
             ),
-            pre: ({ children, ...props }) => (
-              <pre className="rounded bg-background/50 p-2 text-xs overflow-x-auto" {...props}>{children}</pre>
-            ),
+            pre: ({ children, ...props }) => {
+              const mermaid = unwrapMermaidPre(children)
+              if (mermaid) return <>{mermaid}</>
+              return (
+                <pre
+                  dir="ltr"
+                  className="rounded bg-background/50 p-2 text-xs overflow-x-auto"
+                  style={{ textAlign: "left" }}
+                  {...props}
+                >
+                  {children}
+                </pre>
+              )
+            },
+            code: ({ className, children, ...props }) => {
+              const lang = className?.replace("language-", "")
+              const codeText = String(children).replace(/\n$/, "")
+              if (lang === "mermaid") {
+                return <MermaidDiagram code={codeText} />
+              }
+              return <code dir="ltr" className={className} {...props}>{children}</code>
+            },
           }}
         >
           {processed}

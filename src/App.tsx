@@ -3,10 +3,11 @@ import { open } from "@tauri-apps/plugin-dialog"
 import i18n from "@/i18n"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useReviewStore } from "@/stores/review-store"
+import { useLintStore } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
 import { listDirectory, openProject } from "@/commands/fs"
-import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadNotionApiKey } from "@/lib/project-store"
-import { loadReviewItems, loadChatHistory } from "@/lib/persist"
+import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadNotionApiKey } from "@/lib/project-store"
+import { loadReviewItems, loadLintItems, loadChatHistory } from "@/lib/persist"
 import { setupAutoSave } from "@/lib/auto-save"
 import { startClipWatcher } from "@/lib/clip-watcher"
 import { AppLayout } from "@/components/layout/app-layout"
@@ -75,13 +76,25 @@ function App() {
         if (savedMultimodalConfig) {
           useWikiStore.getState().setMultimodalConfig(savedMultimodalConfig)
         }
-        const savedOutputLang = await loadOutputLanguage()
-        if (savedOutputLang) {
-          useWikiStore.getState().setOutputLanguage(savedOutputLang)
-        }
         const savedProxy = await loadProxyConfig()
         if (savedProxy) {
           useWikiStore.getState().setProxyConfig(savedProxy)
+        }
+        // Local HTTP API server config — global (single token + enable
+        // flag for the whole install, not per-project). The Rust side
+        // reads `apiConfig.{enabled,token}` from `app-state.json`
+        // directly; this only hydrates the Zustand store so the
+        // Settings UI reflects the persisted values.
+        const savedApi = await loadApiConfig()
+        if (savedApi) {
+          useWikiStore.getState().setApiConfig({
+            enabled: typeof savedApi.enabled === "boolean" ? savedApi.enabled : true,
+            allowUnauthenticated:
+              typeof savedApi.allowUnauthenticated === "boolean"
+                ? savedApi.allowUnauthenticated
+                : false,
+            token: typeof savedApi.token === "string" ? savedApi.token : "",
+          })
         }
         const savedLang = await loadLanguage()
         if (savedLang) {
@@ -118,6 +131,8 @@ function App() {
     await resetProjectState()
 
     setProject(proj)
+    const projectOutputLang = await loadOutputLanguage(proj.id)
+    useWikiStore.getState().setOutputLanguage(projectOutputLang ?? "auto")
     setSelectedFile(null)
     setActiveView("wiki")
     // Bump data version so any cached graphs/views invalidate
@@ -127,17 +142,67 @@ function App() {
     // Restore ingest queue (resume interrupted tasks). Keyed by the
     // project's stable UUID so the queue still finds the right project
     // even if the filesystem path changed since the task was enqueued.
-    import("@/lib/ingest-queue").then(({ restoreQueue }) => {
-      restoreQueue(proj.id, proj.path).catch((err) =>
-        console.error("Failed to restore ingest queue:", err)
-      )
-    })
+    // Await this before starting file sync: watcher events for raw/sources
+    // may enqueue ingest tasks and require an active project queue.
+    try {
+      const { restoreQueue } = await import("@/lib/ingest-queue")
+      await restoreQueue(proj.id, proj.path)
+    } catch (err) {
+      console.error("Failed to restore ingest queue:", err)
+    }
     // Same handshake for the dedup-merge queue.
     import("@/lib/dedup-queue").then(({ restoreQueue }) => {
       restoreQueue(proj.id, proj.path).catch((err) =>
         console.error("Failed to restore dedup queue:", err)
       )
     })
+    // Load per-project scheduled import config
+    try {
+      const savedScheduledImport = await loadScheduledImportConfig(proj.path)
+      if (savedScheduledImport) {
+        // Migrate relative path to absolute (backward compatibility)
+        let path = savedScheduledImport.path
+        if (path && !path.startsWith("/") && !path.match(/^[a-zA-Z]:[/\\]/)) {
+          path = `${proj.path}/${path}`
+        }
+        useWikiStore.getState().setScheduledImportConfig({
+          ...savedScheduledImport,
+          path,
+        })
+      } else {
+        // Reset to default for new projects
+        useWikiStore.getState().setScheduledImportConfig({
+          enabled: false,
+          path: `${proj.path}/raw/sources`,
+          interval: 60,
+          lastScan: null,
+        })
+      }
+    } catch {
+      // ignore
+    }
+    // Start scheduled import if enabled
+    const scheduledImportConfig = useWikiStore.getState().scheduledImportConfig
+    if (scheduledImportConfig.enabled && scheduledImportConfig.path && scheduledImportConfig.interval > 0) {
+      import("@/lib/scheduled-import").then(({ startScheduledImport }) => {
+        startScheduledImport(proj, scheduledImportConfig)
+      }).catch((err) =>
+        console.error("Failed to start scheduled import:", err)
+      )
+    }
+
+    // Start project source watch if enabled
+    import("@/lib/project-file-sync").then(async ({ startProjectFileSync, stopProjectFileSync }) => {
+      const config = await loadSourceWatchConfig(proj.id)
+      useWikiStore.getState().setSourceWatchConfig(config)
+      if (config.enabled) {
+        startProjectFileSync(proj, config).catch((err) =>
+          console.error("Failed to start project file sync:", err)
+        )
+      } else {
+        stopProjectFileSync().catch(() => {})
+      }
+    }).catch((err) => console.error("Failed to configure project file sync:", err))
     // Notify local clip server of the current project + all recent projects
     fetch("http://127.0.0.1:19827/project", {
       method: "POST",
@@ -168,6 +233,14 @@ function App() {
       }
     } catch {
       // ignore, start fresh
+    }
+    // Load persisted lint items
+    useLintStore.getState().setItems([])
+    try {
+      const savedLint = await loadLintItems(proj.path)
+      useLintStore.getState().setItems(savedLint)
+    } catch {
+      useLintStore.getState().setItems([])
     }
     // Load persisted chat history
     try {
@@ -211,6 +284,18 @@ function App() {
   }
 
   async function handleSwitchProject() {
+    // Stop scheduled import before switching projects
+    import("@/lib/scheduled-import").then(({ stopScheduledImport }) => {
+      stopScheduledImport()
+    }).catch(() => {})
+
+    // Save current project's scheduled import config before clearing
+    const currentProject = useWikiStore.getState().project
+    if (currentProject) {
+      const currentConfig = useWikiStore.getState().scheduledImportConfig
+      saveScheduledImportConfig(currentProject.path, currentConfig).catch(() => {})
+    }
+
     // Clear all per-project state BEFORE flipping back to the welcome screen
     // so old data cannot leak in via any async render pass.
     const { resetProjectState } = await import("@/lib/reset-project-state")

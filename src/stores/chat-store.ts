@@ -1,5 +1,6 @@
 import { create } from "zustand"
 import type { ChatMessage } from "@/lib/llm-client"
+import i18n from "@/i18n"
 
 export interface Conversation {
   id: string
@@ -11,6 +12,10 @@ export interface Conversation {
 export interface MessageReference {
   title: string
   path: string
+  kind?: "wiki" | "external"
+  source?: string
+  url?: string
+  snippet?: string
 }
 
 export interface DisplayMessage {
@@ -81,7 +86,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const now = Date.now()
     const newConversation: Conversation = {
       id,
-      title: "New Conversation",
+      title: i18n.t("chat.newConversation"),
       createdAt: now,
       updatedAt: now,
     }

@@ -1,5 +1,6 @@
 import { create } from "zustand"
 import type { WikiProject, FileNode } from "@/types/wiki"
+import { DEFAULT_SOURCE_WATCH_CONFIG } from "@/lib/source-watch-config"
 
 /**
  * Wire protocol used when `provider === "custom"`. Other providers have a
@@ -8,20 +9,81 @@ import type { WikiProject, FileNode } from "@/types/wiki"
  * `chat_completions` for backward compatibility with pre-0.3.7 configs.
  */
 export type CustomApiMode = "chat_completions" | "anthropic_messages"
+export type AzureModelFamily = "auto" | "gpt5"
+export type ReasoningMode = "auto" | "off" | "low" | "medium" | "high" | "max" | "custom"
+
+export interface ReasoningConfig {
+  mode: ReasoningMode
+  budgetTokens?: number
+}
 
 interface LlmConfig {
-  provider: "openai" | "anthropic" | "google" | "ollama" | "custom" | "minimax" | "claude-code"
+  provider: "openai" | "anthropic" | "google" | "azure" | "ollama" | "custom" | "minimax" | "claude-code" | "codex-cli"
   apiKey: string
   model: string
   ollamaUrl: string
   customEndpoint: string
+  azureApiVersion?: string
+  azureModelFamily?: AzureModelFamily
   maxContextSize: number // max context window in characters
   apiMode?: CustomApiMode
+  reasoning?: ReasoningConfig
+}
+
+export type SearchProvider = "tavily" | "serpapi" | "searxng" | "ollama" | "none"
+export type DeepResearchSource = "web" | "anytxt" | "both"
+export type SerpApiEngine =
+  | "google"
+  | "google_news"
+  | "google_scholar"
+  | "google_patents"
+  | "bing"
+  | "duckduckgo"
+  | "google_images"
+  | "google_videos"
+  | "youtube"
+  | string
+export type SearXngCategory =
+  | "general"
+  | "news"
+  | "science"
+  | "it"
+  | "images"
+  | "videos"
+  | "files"
+  | "map"
+  | "music"
+  | "social media"
+  | string
+
+export interface SearchProviderOverride {
+  apiKey?: string
+  serpApiEngine?: SerpApiEngine
+  searXngUrl?: string
+  searXngCategories?: SearXngCategory[]
+  ollamaUrl?: string
+}
+
+export type SearchProviderConfigs = Partial<Record<Exclude<SearchProvider, "none">, SearchProviderOverride>>
+
+export interface AnyTxtConfig {
+  enabled?: boolean
+  endpoint?: string
+  filterDir?: string
+  filterExt?: string
+  limit?: number
 }
 
 interface SearchApiConfig {
-  provider: "tavily" | "none"
+  provider: SearchProvider
   apiKey: string
+  serpApiEngine?: SerpApiEngine
+  searXngUrl?: string
+  searXngCategories?: SearXngCategory[]
+  ollamaUrl?: string
+  providerConfigs?: SearchProviderConfigs
+  deepResearchSource?: DeepResearchSource
+  anyTxt?: AnyTxtConfig
 }
 
 interface EmbeddingConfig {
@@ -29,6 +91,8 @@ interface EmbeddingConfig {
   endpoint: string // e.g. "http://127.0.0.1:1234/v1/embeddings"
   apiKey: string
   model: string // e.g. "text-embedding-qwen3-embedding-0.6b"
+  /** Optional Gemini native `output_dimensionality` value. Ignored by OpenAI-compatible endpoints. */
+  outputDimensionality?: number
   /**
    * Chunking knobs (Phase 1 RAG). Undefined values fall back to the
    * chunker's built-in defaults in `src/lib/text-chunker.ts`:
@@ -44,6 +108,14 @@ interface EmbeddingConfig {
    */
   maxChunkChars?: number
   overlapChunkChars?: number
+  /**
+   * Extra HTTP headers to send with every embedding request, e.g.
+   *   { "X-Model-Provider-Id": "siliconflow" }
+   * for gateways like mify that route by header. Reserved names
+   * (Authorization, Content-Type, Host, Content-Length, x-goog-api-key)
+   * are ignored — they're managed by the embedding client itself.
+   */
+  extraHeaders?: Record<string, string>
 }
 
 /**
@@ -87,6 +159,43 @@ interface ProxyConfig {
   bypassLocal: boolean
 }
 
+interface ScheduledImportConfig {
+  enabled: boolean
+  path: string // 监控目录的相对路径（相对于项目根目录），空字符串表示使用默认的 "raw"
+  interval: number // 扫描间隔（分钟）
+  lastScan: number | null // 上次扫描时间戳
+}
+
+/**
+ * Local HTTP API server config. Read by the Rust `api_server` module on
+ * every request via `load_app_state` (5s cache). The Rust side is the
+ * source of truth at request time; this struct is the persisted form
+ * the UI edits.
+ *
+ *   - `enabled` gates all non-/health endpoints. Default `true` so an
+ *     env-token-only setup keeps working after the toggle is added.
+ *   - `allowUnauthenticated` lets local agents call the API without a
+ *     token. It is explicit and default-off.
+ *   - `token` is the bearer secret. Empty + auth required =
+ *     every non-/health request returns 401. The env var
+ *     `LLM_WIKI_API_TOKEN` overrides this field at the backend.
+ */
+interface ApiConfig {
+  enabled: boolean
+  allowUnauthenticated: boolean
+  token: string
+}
+
+interface SourceWatchConfig {
+  enabled: boolean
+  autoIngest: boolean
+  includeExtensions: string[]
+  excludeExtensions: string[]
+  excludeDirs: string[]
+  excludeGlobs: string[]
+  maxFileSizeMb: number
+}
+
 interface MultimodalConfig {
   enabled: boolean
   /** Reuse `llmConfig` for caption calls. When true, the fields
@@ -97,6 +206,8 @@ interface MultimodalConfig {
   model: string
   ollamaUrl: string
   customEndpoint: string
+  azureApiVersion?: string
+  azureModelFamily?: AzureModelFamily
   apiMode?: CustomApiMode
   /** Max parallel caption requests during ingest. >=1. */
   concurrency: number
@@ -122,6 +233,7 @@ type OutputLanguage =
   | "Italian"
   | "Russian"
   | "Arabic"
+  | "Persian"
   | "Hindi"
   | "Turkish"
   | "Dutch"
@@ -129,6 +241,7 @@ type OutputLanguage =
   | "Swedish"
   | "Indonesian"
   | "Thai"
+  | "Ukrainian"
 
 /**
  * Per-preset saved fields. Each entry survives turning the preset off
@@ -139,17 +252,29 @@ export interface ProviderOverride {
   apiKey?: string
   model?: string
   baseUrl?: string           // customEndpoint for custom presets, ollamaUrl for ollama
+  azureApiVersion?: string
+  azureModelFamily?: AzureModelFamily
   apiMode?: CustomApiMode
   maxContextSize?: number
+  reasoning?: ReasoningConfig
 }
 
 export type ProviderConfigs = Record<string, ProviderOverride>
+
+export interface ExternalPreview {
+  title: string
+  path: string
+  source: string
+  url: string
+  snippet: string
+}
 
 interface WikiState {
   project: WikiProject | null
   fileTree: FileNode[]
   selectedFile: string | null
   fileContent: string
+  externalPreview: ExternalPreview | null
   /**
    * One-shot scroll target for the markdown preview. When the user
    * clicks an image in search results and chooses "jump to source",
@@ -178,12 +303,16 @@ interface WikiState {
   outputLanguage: OutputLanguage
   notionApiKey: string
   proxyConfig: ProxyConfig
+  scheduledImportConfig: ScheduledImportConfig
+  sourceWatchConfig: SourceWatchConfig
+  apiConfig: ApiConfig
   dataVersion: number
 
   setProject: (project: WikiProject | null) => void
   setFileTree: (tree: FileNode[]) => void
   setSelectedFile: (path: string | null) => void
   setFileContent: (content: string) => void
+  setExternalPreview: (preview: ExternalPreview | null) => void
   setPendingScrollImageSrc: (src: string | null) => void
   setChatExpanded: (expanded: boolean) => void
   setActiveView: (view: WikiState["activeView"]) => void
@@ -196,6 +325,9 @@ interface WikiState {
   setOutputLanguage: (lang: OutputLanguage) => void
   setNotionApiKey: (key: string) => void
   setProxyConfig: (config: ProxyConfig) => void
+  setScheduledImportConfig: (config: ScheduledImportConfig) => void
+  setSourceWatchConfig: (config: SourceWatchConfig) => void
+  setApiConfig: (config: ApiConfig) => void
   bumpDataVersion: () => void
 }
 
@@ -204,6 +336,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   fileTree: [],
   selectedFile: null,
   fileContent: "",
+  externalPreview: null,
   pendingScrollImageSrc: null,
   chatExpanded: false,
   activeView: "wiki",
@@ -214,6 +347,8 @@ export const useWikiStore = create<WikiState>((set) => ({
     model: "",
     ollamaUrl: "http://localhost:11434",
     customEndpoint: "",
+    azureApiVersion: "2024-10-21",
+    reasoning: { mode: "auto" },
   },
   providerConfigs: {},
   activePresetId: null,
@@ -222,14 +357,27 @@ export const useWikiStore = create<WikiState>((set) => ({
 
   setProject: (project) => set({ project }),
   setFileTree: (fileTree) => set({ fileTree }),
-  setSelectedFile: (selectedFile) => set({ selectedFile }),
+  setSelectedFile: (selectedFile) => set({ selectedFile, externalPreview: null }),
   setFileContent: (fileContent) => set({ fileContent }),
+  setExternalPreview: (externalPreview) => set({ externalPreview }),
   setPendingScrollImageSrc: (pendingScrollImageSrc) => set({ pendingScrollImageSrc }),
   setChatExpanded: (chatExpanded) => set({ chatExpanded }),
   setActiveView: (activeView) => set({ activeView }),
   searchApiConfig: {
     provider: "none",
     apiKey: "",
+    serpApiEngine: "google",
+    searXngUrl: "",
+    searXngCategories: ["general"],
+    providerConfigs: {},
+    deepResearchSource: "web",
+    anyTxt: {
+      enabled: false,
+      endpoint: "http://127.0.0.1:9920",
+      filterDir: "",
+      filterExt: "*",
+      limit: 20,
+    },
   },
 
   embeddingConfig: {
@@ -252,6 +400,7 @@ export const useWikiStore = create<WikiState>((set) => ({
     model: "",
     ollamaUrl: "http://localhost:11434",
     customEndpoint: "",
+    azureApiVersion: "2024-10-21",
     apiMode: "chat_completions",
     concurrency: 4,
   },
@@ -265,6 +414,26 @@ export const useWikiStore = create<WikiState>((set) => ({
     bypassLocal: true,
   },
 
+  scheduledImportConfig: {
+    enabled: false,
+    path: "",
+    interval: 60,
+    lastScan: null,
+  },
+
+  sourceWatchConfig: DEFAULT_SOURCE_WATCH_CONFIG,
+
+  // Default `enabled: true` preserves the pre-toggle behavior: anyone
+  // who already had `LLM_WIKI_API_TOKEN` set or `apiConfig.token`
+  // hand-edited keeps their working API. New users land in
+  // "enabled + no token = 401 on every endpoint" — fail-closed by
+  // virtue of the token being empty.
+  apiConfig: {
+    enabled: true,
+    allowUnauthenticated: false,
+    token: "",
+  },
+
   setLlmConfig: (llmConfig) => set({ llmConfig }),
   setProviderConfigs: (providerConfigs) => set({ providerConfigs }),
   setActivePresetId: (activePresetId) => set({ activePresetId }),
@@ -274,7 +443,10 @@ export const useWikiStore = create<WikiState>((set) => ({
   setOutputLanguage: (outputLanguage) => set({ outputLanguage }),
   setNotionApiKey: (notionApiKey) => set({ notionApiKey }),
   setProxyConfig: (proxyConfig) => set({ proxyConfig }),
+  setScheduledImportConfig: (scheduledImportConfig) => set({ scheduledImportConfig }),
+  setSourceWatchConfig: (sourceWatchConfig) => set({ sourceWatchConfig }),
+  setApiConfig: (apiConfig) => set({ apiConfig }),
   bumpDataVersion: () => set((state) => ({ dataVersion: state.dataVersion + 1 })),
 }))
 
-export type { WikiState, LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProxyConfig }
+export type { WikiState, LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProxyConfig, ScheduledImportConfig, SourceWatchConfig, ApiConfig }

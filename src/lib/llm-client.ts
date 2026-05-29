@@ -1,13 +1,15 @@
 import type { LlmConfig } from "@/stores/wiki-store"
+import { isAzureOpenAiEndpoint } from "@/lib/azure-openai"
 import { getProviderConfig, type RequestOverrides } from "./llm-providers"
 import { getHttpFetch, isFetchNetworkError } from "./tauri-fetch"
-import { countReasoningCharsInLine } from "./reasoning-detector"
+import { countReasoningCharsInLine, extractReasoningTextFromLine } from "./reasoning-detector"
 
 export type { ChatMessage, RequestOverrides } from "./llm-providers"
 export { isFetchNetworkError } from "./tauri-fetch"
 
 export interface StreamCallbacks {
   onToken: (token: string) => void
+  onReasoningToken?: (token: string) => void
   onDone: () => void
   onError: (error: Error) => void
 }
@@ -23,6 +25,17 @@ async function streamViaClaudeCodeCli(
 ) {
   const mod = await import("./claude-cli-transport")
   return mod.streamClaudeCodeCli(config, messages, callbacks, signal, requestOverrides)
+}
+
+async function streamViaCodexCli(
+  config: LlmConfig,
+  messages: import("./llm-providers").ChatMessage[],
+  callbacks: StreamCallbacks,
+  signal?: AbortSignal,
+  requestOverrides?: RequestOverrides,
+) {
+  const mod = await import("./codex-cli-transport")
+  return mod.streamCodexCli(config, messages, callbacks, signal, requestOverrides)
 }
 
 const DECODER = new TextDecoder()
@@ -56,6 +69,10 @@ export async function streamChat(
   // this provider because it has no URL/headers.
   if (config.provider === "claude-code") {
     return streamViaClaudeCodeCli(config, messages, callbacks, signal, requestOverrides)
+  }
+
+  if (config.provider === "codex-cli") {
+    return streamViaCodexCli(config, messages, callbacks, signal, requestOverrides)
   }
 
   const providerConfig = getProviderConfig(config)
@@ -136,6 +153,21 @@ export async function streamChat(
     } catch {
       // ignore body read failure
     }
+    if (
+      response.status === 404 &&
+      (config.provider === "azure" ||
+        (config.provider === "custom" && isAzureOpenAiEndpoint(config.customEndpoint)))
+    ) {
+      onError(
+        new Error(
+          `${errorDetail} — Azure 404 usually means the deployment name is wrong. ` +
+            `Set Model to your Azure deployment name (not the model SKU), ` +
+            `and Endpoint to https://<resource>.openai.azure.com ` +
+            `or .../openai/deployments/<deployment-name>.`,
+        ),
+      )
+      return
+    }
     onError(new Error(errorDetail))
     return
   }
@@ -165,6 +197,12 @@ export async function streamChat(
     contentCharsEmitted += text.length
     onToken(text)
   }
+  const recordReasoning = (line: string) => {
+    const reasoningParts = extractReasoningTextFromLine(line)
+    for (const part of reasoningParts) {
+      callbacks.onReasoningToken?.(part)
+    }
+  }
 
   try {
     while (true) {
@@ -172,8 +210,10 @@ export async function streamChat(
 
       if (done) {
         if (lineBuffer.trim()) {
-          reasoningCharsObserved += countReasoningCharsInLine(lineBuffer.trim())
-          const token = providerConfig.parseStream(lineBuffer.trim())
+          const trimmed = lineBuffer.trim()
+          reasoningCharsObserved += countReasoningCharsInLine(trimmed)
+          recordReasoning(trimmed)
+          const token = providerConfig.parseStream(trimmed)
           if (token !== null) recordToken(token)
         }
         break
@@ -186,6 +226,7 @@ export async function streamChat(
         const trimmed = line.trim()
         if (!trimmed) continue
         reasoningCharsObserved += countReasoningCharsInLine(trimmed)
+        recordReasoning(trimmed)
         const token = providerConfig.parseStream(trimmed)
         if (token !== null) recordToken(token)
       }

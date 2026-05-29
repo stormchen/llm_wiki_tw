@@ -13,13 +13,21 @@ import {
   FileSpreadsheet,
   FileQuestion,
 } from "lucide-react"
-import { getFileCategory, getCodeLanguage } from "@/lib/file-types"
+import {
+  getFileCategory,
+  getCodeLanguage,
+  getFileExtension,
+  isExtractedTextPreviewFile,
+} from "@/lib/file-types"
 import type { FileCategory } from "@/lib/file-types"
 import { getFileName } from "@/lib/path-utils"
 import { resolveMarkdownImageSrc } from "@/lib/markdown-image-resolver"
+import { detectLanguage } from "@/lib/detect-language"
+import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
 import { parseFrontmatter } from "@/lib/frontmatter"
 import { FrontmatterPanel } from "@/components/editor/frontmatter-panel"
 import { useWikiStore } from "@/stores/wiki-store"
+import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
 
 interface FilePreviewProps {
   filePath: string
@@ -46,9 +54,32 @@ export function FilePreview({ filePath, textContent }: FilePreviewProps) {
     case "text":
       return <TextPreview filePath={filePath} content={textContent} label="Text" />
     case "document":
+      if (isExtractedTextPreviewFile(filePath)) {
+        return <TextPreview filePath={filePath} content={textContent} label={extractedTextLabel(filePath)} />
+      }
       return <BinaryPlaceholder filePath={filePath} fileName={fileName} category={category} />
     default:
       return <BinaryPlaceholder filePath={filePath} fileName={fileName} category={category} />
+  }
+}
+
+function extractedTextLabel(filePath: string): string {
+  switch (getFileExtension(filePath)) {
+    case "doc":
+      return "Word DOC (extracted text)"
+    case "docx":
+      return "Word DOCX (extracted text)"
+    case "pptx":
+      return "PowerPoint (extracted text)"
+    case "xls":
+    case "xlsx":
+      return "Spreadsheet (extracted text)"
+    case "odt":
+    case "ods":
+    case "odp":
+      return "OpenDocument (extracted text)"
+    default:
+      return "Extracted text"
   }
 }
 
@@ -122,6 +153,9 @@ function TextPreview({ filePath, content, label }: { filePath: string; content: 
   const scrollRootRef = useRef<HTMLDivElement | null>(null)
 
   const { frontmatter, body } = useMemo(() => parseFrontmatter(content), [content])
+  const renderLanguage = useMemo(() => detectLanguage(body), [body])
+  const direction = getTextDirection(renderLanguage)
+  const htmlLang = getHtmlLang(renderLanguage)
 
   // Consume `pendingScrollImageSrc` once the file has rendered.
   // We re-scan the DOM whenever:
@@ -184,7 +218,12 @@ function TextPreview({ filePath, content, label }: { filePath: string; content: 
         <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase">{label}</span>
       </div>
       {frontmatter && <FrontmatterPanel data={frontmatter} />}
-      <div className="prose prose-sm max-w-none dark:prose-invert">
+      <div
+        className="prose prose-sm max-w-none dark:prose-invert"
+        dir={direction}
+        lang={htmlLang}
+        style={{ textAlign: "start" }}
+      >
         <ReactMarkdown
           remarkPlugins={[remarkGfm, remarkMath]}
           rehypePlugins={[rehypeKatex]}
@@ -218,11 +257,22 @@ function TextPreview({ filePath, content, label }: { filePath: string; content: 
               <thead className="bg-muted" {...props}>{children}</thead>
             ),
             th: ({ children, ...props }) => (
-              <th className="border border-border/80 px-3 py-1.5 text-left font-semibold bg-muted" {...props}>{children}</th>
+              <th className="border border-border/80 px-3 py-1.5 text-start font-semibold bg-muted" {...props}>{children}</th>
             ),
             td: ({ children, ...props }) => (
               <td className="border border-border/60 px-3 py-1.5" {...props}>{children}</td>
             ),
+            pre: ({ children, ...props }) => {
+              const mermaid = unwrapMermaidPre(children)
+              if (mermaid) return <>{mermaid}</>
+              return <pre dir="ltr" style={{ textAlign: "left" }} {...props}>{children}</pre>
+            },
+            code: ({ className, children, ...props }) => {
+              const lang = className?.replace("language-", "")
+              const codeText = String(children).replace(/\n$/, "")
+              if (lang === "mermaid") return <MermaidDiagram code={codeText} />
+              return <code dir="ltr" className={className} {...props}>{children}</code>
+            },
           }}
         >
           {body}

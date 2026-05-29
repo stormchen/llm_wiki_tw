@@ -1,5 +1,6 @@
 import type { LlmConfig } from "@/stores/wiki-store"
 import type { ProviderOverride } from "@/stores/wiki-store"
+import { AZURE_OPENAI_API_VERSION } from "@/lib/azure-openai"
 import type { LlmPreset } from "./llm-presets"
 
 /**
@@ -17,6 +18,7 @@ export function resolveConfig(
   const model = ov.model ?? preset.defaultModel ?? ""
   const maxContextSize =
     ov.maxContextSize ?? preset.suggestedContextSize ?? fallback.maxContextSize
+  const reasoning = ov.reasoning ?? { mode: "auto" as const }
 
   if (preset.provider === "custom") {
     return {
@@ -27,6 +29,7 @@ export function resolveConfig(
       customEndpoint: ov.baseUrl ?? preset.baseUrl ?? "",
       maxContextSize,
       apiMode: ov.apiMode ?? preset.apiMode ?? "chat_completions",
+      reasoning,
     }
   }
 
@@ -38,19 +41,35 @@ export function resolveConfig(
       ollamaUrl: ov.baseUrl ?? preset.baseUrl ?? "http://localhost:11434",
       customEndpoint: fallback.customEndpoint,
       maxContextSize,
+      reasoning,
     }
   }
 
-  if (preset.provider === "claude-code") {
-    // Subprocess transport — no apiKey, no endpoint URL. Model id is
-    // passed straight to `claude --model`.
+  if (preset.provider === "azure") {
     return {
-      provider: "claude-code",
+      provider: "azure",
+      apiKey,
+      model,
+      ollamaUrl: fallback.ollamaUrl,
+      customEndpoint: ov.baseUrl ?? preset.baseUrl ?? "",
+      azureApiVersion: ov.azureApiVersion ?? preset.azureApiVersion ?? AZURE_OPENAI_API_VERSION,
+      azureModelFamily: ov.azureModelFamily ?? preset.azureModelFamily ?? "auto",
+      maxContextSize,
+      reasoning,
+    }
+  }
+
+  if (preset.provider === "claude-code" || preset.provider === "codex-cli") {
+    // Subprocess transport — no apiKey, no endpoint URL. Model id is
+    // passed straight to the local CLI's model flag.
+    return {
+      provider: preset.provider,
       apiKey: "",
       model,
       ollamaUrl: fallback.ollamaUrl,
       customEndpoint: fallback.customEndpoint,
       maxContextSize,
+      reasoning,
     }
   }
 
@@ -64,5 +83,6 @@ export function resolveConfig(
     ollamaUrl: fallback.ollamaUrl,
     customEndpoint: fallback.customEndpoint,
     maxContextSize,
+    reasoning,
   }
 }

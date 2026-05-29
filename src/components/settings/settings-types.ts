@@ -1,4 +1,5 @@
 import type { CustomApiMode } from "./llm-presets"
+import type { AzureModelFamily, ReasoningConfig, SourceWatchConfig } from "@/stores/wiki-store"
 
 /**
  * Shape of the draft state each section reads from and writes into.
@@ -8,38 +9,43 @@ import type { CustomApiMode } from "./llm-presets"
  */
 export interface SettingsDraft {
   // LLM provider
-  provider: "openai" | "anthropic" | "google" | "ollama" | "custom" | "minimax" | "claude-code"
+  provider: "openai" | "anthropic" | "google" | "azure" | "ollama" | "custom" | "minimax" | "claude-code" | "codex-cli"
   apiKey: string
   model: string
   ollamaUrl: string
   customEndpoint: string
+  azureApiVersion: string
+  azureModelFamily: AzureModelFamily
   maxContextSize: number
   apiMode: CustomApiMode | undefined
+  reasoning: ReasoningConfig | undefined
 
   // Embedding
   embeddingEnabled: boolean
   embeddingEndpoint: string
   embeddingApiKey: string
   embeddingModel: string
+  /** Optional Gemini native output_dimensionality. Empty = provider default. */
+  embeddingOutputDimensionality: number | undefined
   /** Target characters per chunk. Empty = use chunker default (1000). */
   embeddingMaxChunkChars: number | undefined
   /** Overlap characters between adjacent chunks. Empty = default (200). */
   embeddingOverlapChunkChars: number | undefined
+  /** Extra HTTP headers to send on every embedding request. Empty = none. */
+  embeddingExtraHeaders: Record<string, string>
 
   // Multimodal (image captioning at ingest time)
   multimodalEnabled: boolean
   multimodalUseMainLlm: boolean
-  multimodalProvider: "openai" | "anthropic" | "google" | "ollama" | "custom" | "minimax" | "claude-code"
+  multimodalProvider: "openai" | "anthropic" | "google" | "azure" | "ollama" | "custom" | "minimax" | "claude-code" | "codex-cli"
   multimodalApiKey: string
   multimodalModel: string
   multimodalOllamaUrl: string
   multimodalCustomEndpoint: string
+  multimodalAzureApiVersion: string
+  multimodalAzureModelFamily: AzureModelFamily
   multimodalApiMode: CustomApiMode | undefined
   multimodalConcurrency: number
-
-  // Web search
-  searchProvider: "tavily" | "none"
-  searchApiKey: string
 
   // Output preferences
   outputLanguage: string
@@ -52,8 +58,21 @@ export interface SettingsDraft {
   proxyUrl: string
   proxyBypassLocal: boolean
 
+  // Scheduled Import
+  scheduledImportEnabled: boolean
+  scheduledImportPath: string
+  scheduledImportInterval: number // minutes
+
   // UI
   uiLanguage: string
+
+  // Source folder auto watch
+  sourceWatchConfig: SourceWatchConfig
+
+  // Local HTTP API server
+  apiEnabled: boolean
+  apiAllowUnauthenticated: boolean
+  apiToken: string
 
   // Integrations
   notionApiKey: string

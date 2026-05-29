@@ -1,4 +1,9 @@
-import type { LlmConfig } from "@/stores/wiki-store"
+import type { LlmConfig, ReasoningConfig } from "@/stores/wiki-store"
+import {
+  AZURE_OPENAI_API_VERSION,
+  buildAzureOpenAiUrl,
+  isAzureOpenAiEndpoint,
+} from "@/lib/azure-openai"
 
 /**
  * One piece of a multimodal message body. Text + image is the only
@@ -49,6 +54,7 @@ export interface RequestOverrides {
   top_k?: number
   max_tokens?: number
   stop?: string | string[]
+  reasoning?: ReasoningConfig
 }
 
 interface ProviderConfig {
@@ -218,7 +224,145 @@ function buildOpenAiBody(
     role: m.role,
     content: toOpenAiContent(m.content),
   }))
-  return { messages: translated, stream: true, ...(overrides ?? {}) }
+  return { messages: translated, stream: true, ...stripWireAgnosticOverrides(overrides) }
+}
+
+function stripWireAgnosticOverrides(overrides?: RequestOverrides): Omit<RequestOverrides, "reasoning"> {
+  const { reasoning: _reasoning, ...rest } = overrides ?? {}
+  return rest
+}
+
+function effectiveReasoning(config: LlmConfig, overrides?: RequestOverrides): ReasoningConfig {
+  return overrides?.reasoning ?? config.reasoning ?? { mode: "auto" }
+}
+
+function isDeepSeekEndpoint(config: LlmConfig): boolean {
+  return /deepseek/i.test(config.model) || /deepseek/i.test(config.customEndpoint)
+}
+
+function isQwenThinkingModel(model: string): boolean {
+  return /qwen[-_]?3/i.test(model)
+}
+
+function isKimiEndpoint(config: LlmConfig): boolean {
+  return /(^|[/:.-])kimi([/:.-]|$)/i.test(config.model)
+    || /moonshot/i.test(config.model)
+    || /api\.moonshot\.(ai|cn)/i.test(config.customEndpoint)
+}
+
+function isXiaomiMimoEndpoint(config: LlmConfig): boolean {
+  return /(^|[/:.-])mimo([/:.-]|$)/i.test(config.model)
+    || /\.?xiaomimimo\.com(?::|\/|$)/i.test(config.customEndpoint)
+}
+
+function isOpenAiStrictCompletionModel(config: LlmConfig): boolean {
+  if ((config.provider === "azure" || (config.provider === "custom" && isAzureOpenAiEndpoint(config.customEndpoint)))
+    && config.azureModelFamily === "gpt5") {
+    return true
+  }
+
+  const model = config.model.trim().toLowerCase()
+  const strictModel =
+    /^gpt-5(?:[.\-_]|$)/.test(model) || /^o\d+(?:[.\-_]|$)/.test(model)
+  if (!strictModel) return false
+  if (config.provider === "openai" || config.provider === "azure") return true
+  return config.provider === "custom" && isAzureOpenAiEndpoint(config.customEndpoint)
+}
+
+function adaptOpenAiStrictCompletionBody(config: LlmConfig, body: Record<string, unknown>): void {
+  if (!isOpenAiStrictCompletionModel(config)) return
+
+  if (typeof body.max_tokens === "number") {
+    body.max_completion_tokens = body.max_tokens
+    delete body.max_tokens
+  }
+
+  // GPT-5 / o-series Chat Completions deployments reject non-default
+  // sampling knobs. Structured ingest passes temperature=0.1, so strip
+  // these only on the strict OpenAI path; custom/OpenRouter-compatible
+  // routes keep their existing behavior.
+  delete body.temperature
+  delete body.top_p
+  delete body.top_k
+}
+
+function adaptKimiBody(config: LlmConfig, body: Record<string, unknown>): void {
+  if (!isKimiEndpoint(config)) return
+
+  // Moonshot/Kimi OpenAI-compatible endpoints reject non-default
+  // temperature values for several current models ("only 1 is allowed").
+  // Structured ingest/dedup pass temperature=0.1 for determinism, so
+  // omit it and let the endpoint use its required default.
+  delete body.temperature
+}
+
+function adaptXiaomiMimoBody(
+  config: LlmConfig,
+  body: Record<string, unknown>,
+  reasoning: ReasoningConfig,
+): void {
+  if (!isXiaomiMimoEndpoint(config)) return
+
+  // Xiaomi MiMo's OpenAI-compatible examples use
+  // `max_completion_tokens`. Accept callers' provider-agnostic
+  // `max_tokens` override but send the documented field on the wire.
+  if (typeof body.max_tokens === "number") {
+    body.max_completion_tokens = body.max_tokens
+    delete body.max_tokens
+  }
+
+  // Official thinking-mode control documents `thinking.type=disabled`.
+  // Do not invent an enabled/budget shape here; omitting the field lets
+  // the server apply the model default.
+  if (reasoning.mode === "off") {
+    body.thinking = { type: "disabled" }
+  } else {
+    // MiMo v2.5 thinking mode forces temperature=1.0 and rejects
+    // custom temperature. Structured ingest passes temperature=0.1,
+    // but it also passes reasoning off above, so keep deterministic
+    // non-thinking requests intact while protecting thinking requests.
+    delete body.temperature
+  }
+}
+
+function buildOpenAiCompatibleBody(
+  config: LlmConfig,
+  messages: ChatMessage[],
+  overrides?: RequestOverrides,
+): Record<string, unknown> {
+  const reasoning = effectiveReasoning(config, overrides)
+  const body: Record<string, unknown> = buildOpenAiBody(messages, stripWireAgnosticOverrides(overrides))
+  adaptOpenAiStrictCompletionBody(config, body)
+  adaptKimiBody(config, body)
+  adaptXiaomiMimoBody(config, body, reasoning)
+
+  if (isDeepSeekEndpoint(config)) {
+    // DeepSeek V4 thinking mode. `thinking.type=disabled` is the most
+    // important path for ingestion/rewrite tasks: it prevents the model
+    // from spending the whole response on `reasoning_content` with no
+    // final `content`.
+    if (reasoning.mode === "off") {
+      body.thinking = { type: "disabled" }
+    } else if (reasoning.mode !== "auto") {
+      body.thinking = { type: "enabled" }
+      if (reasoning.mode === "high" || reasoning.mode === "max") {
+        body.reasoning_effort = reasoning.mode
+      }
+    }
+    return body
+  }
+
+  if (reasoning.mode === "off" && isQwenThinkingModel(config.model)) {
+    body.chat_template_kwargs = { enable_thinking: false }
+  }
+
+  if (config.provider === "openai" && reasoning.mode !== "auto" && reasoning.mode !== "off") {
+    if (reasoning.mode === "low" || reasoning.mode === "medium" || reasoning.mode === "high") {
+      body.reasoning_effort = reasoning.mode
+    }
+  }
+
+  return body
 }
 
 /**
@@ -294,6 +438,34 @@ function buildAnthropicBody(
   }
 }
 
+function buildAnthropicBodyWithReasoning(
+  config: LlmConfig,
+  messages: ChatMessage[],
+  overrides?: RequestOverrides,
+): Record<string, unknown> {
+  const body = buildAnthropicBody(messages, overrides)
+  const reasoning = effectiveReasoning(config, overrides)
+  if (reasoning.mode === "auto" || reasoning.mode === "off") return body
+
+  const budget =
+    reasoning.mode === "custom" && reasoning.budgetTokens !== undefined
+      ? reasoning.budgetTokens
+      : reasoning.mode === "low"
+        ? 1024
+        : reasoning.mode === "medium"
+          ? 4096
+        : 8192
+  const budgetTokens = Math.max(1024, budget)
+  if ((body.max_tokens as number) <= budgetTokens) {
+    body.max_tokens = budgetTokens + 1
+  }
+  body.thinking = { type: "enabled", budget_tokens: budgetTokens }
+  delete body.temperature
+  delete body.top_p
+  delete body.top_k
+  return body
+}
+
 /**
  * Some Anthropic-compatible third-party endpoints (MiniMax global + CN)
  * serve the Messages API but authenticate with `Authorization: Bearer`
@@ -314,7 +486,10 @@ function requiresBearerAuth(url: string): boolean {
     // Alibaba Bailian Coding Plan — issues sk-xxx bearer-style tokens
     // on its /apps/anthropic gateway; behavior matches the other
     // Chinese Anthropic-wire proxies above.
-    normalized.startsWith("https://coding.dashscope.aliyuncs.com/apps/anthropic")
+    normalized.startsWith("https://coding.dashscope.aliyuncs.com/apps/anthropic") ||
+    // Xiaomi MiMo Token Plan Anthropic gateway authenticates with
+    // Authorization Bearer, matching its OpenAI-compatible gateway.
+    /(^https:\/\/|^)token-plan-cn\.xiaomimimo\.com\/anthropic(?:\/|$)/i.test(normalized)
   )
 }
 
@@ -417,6 +592,19 @@ function buildGoogleBody(
   if (overrides?.stop !== undefined) {
     generationConfig.stopSequences = Array.isArray(overrides.stop) ? overrides.stop : [overrides.stop]
   }
+  if (overrides?.reasoning?.mode === "off") {
+    generationConfig.thinkingConfig = { thinkingBudget: 0 }
+  } else if (overrides?.reasoning && overrides.reasoning.mode !== "auto") {
+    const budget =
+      overrides.reasoning.mode === "custom" && overrides.reasoning.budgetTokens !== undefined
+        ? overrides.reasoning.budgetTokens
+        : overrides.reasoning.mode === "low"
+          ? 1024
+          : overrides.reasoning.mode === "medium"
+            ? 4096
+            : 8192
+    generationConfig.thinkingConfig = { thinkingBudget: budget }
+  }
 
   return {
     contents,
@@ -437,7 +625,7 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
           Authorization: `Bearer ${apiKey}`,
         },
         buildBody: (messages, overrides) => ({
-          ...buildOpenAiBody(messages, overrides),
+          ...buildOpenAiCompatibleBody(config, messages, overrides),
           model,
         }),
         parseStream: parseOpenAiLine,
@@ -449,7 +637,7 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
         url,
         headers: buildAnthropicHeaders(apiKey, url),
         buildBody: (messages, overrides) => ({
-          ...buildAnthropicBody(messages, overrides),
+          ...buildAnthropicBodyWithReasoning(config, messages, overrides),
           model,
         }),
         parseStream: parseAnthropicLine,
@@ -468,8 +656,28 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
           "Content-Type": JSON_CONTENT_TYPE,
           "x-goog-api-key": apiKey,
         },
-        buildBody: buildGoogleBody,
+        buildBody: (messages, overrides) => buildGoogleBody(messages, {
+          ...(overrides ?? {}),
+          reasoning: effectiveReasoning(config, overrides),
+        }),
         parseStream: parseGoogleLine,
+      }
+    }
+
+    case "azure": {
+      return {
+        url: buildAzureOpenAiUrl(
+          customEndpoint,
+          model,
+          config.azureApiVersion ?? AZURE_OPENAI_API_VERSION,
+        ),
+        headers: {
+          "Content-Type": JSON_CONTENT_TYPE,
+          "api-key": apiKey,
+        },
+        buildBody: (messages, overrides) =>
+          buildOpenAiCompatibleBody(config, messages, overrides),
+        parseStream: parseOpenAiLine,
       }
     }
 
@@ -490,21 +698,10 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
           "Content-Type": JSON_CONTENT_TYPE,
           ...localLlmOriginHeader(),
         },
-        buildBody: (messages, overrides) => {
-          const body: Record<string, unknown> = {
-            ...buildOpenAiBody(messages, overrides),
-            model,
-          }
-          // Qwen3 thinking mode disable. Recognized by llama.cpp server
-          // launched with `--jinja` (reads chat_template_kwargs from the
-          // OpenAI body and forwards to the Jinja chat template). Real
-          // Ollama silently ignores unknown fields, so this is safe.
-          // Requires llama-server --jinja; without it, thinking stays on.
-          if (/qwen[-_]?3/i.test(model)) {
-            body.chat_template_kwargs = { enable_thinking: false }
-          }
-          return body
-        },
+        buildBody: (messages, overrides) => ({
+          ...buildOpenAiCompatibleBody(config, messages, overrides),
+          model,
+        }),
         parseStream: parseOpenAiLine,
       }
     }
@@ -520,7 +717,7 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
         url,
         headers: buildAnthropicHeaders(apiKey, url),
         buildBody: (messages, overrides) => ({
-          ...buildAnthropicBody(messages, overrides),
+          ...buildAnthropicBodyWithReasoning(config, messages, overrides),
           model,
         }),
         parseStream: parseAnthropicLine,
@@ -528,12 +725,13 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
     }
 
     case "claude-code":
-      // Claude Code CLI uses a subprocess transport (stdin/stdout JSON
-      // stream), not HTTP. Dispatch happens one layer up in
+    case "codex-cli":
+      // Local CLI providers use subprocess transports (stdin/stdout JSON
+      // streams), not HTTP. Dispatch happens one layer up in
       // streamChat() before getProviderConfig is called. Reaching this
       // branch means wiring is broken somewhere upstream.
       throw new Error(
-        "claude-code provider uses subprocess transport; getProviderConfig should not be called for it",
+        `${provider} provider uses subprocess transport; getProviderConfig should not be called for it`,
       )
 
     case "custom": {
@@ -548,7 +746,7 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
           url,
           headers: buildAnthropicHeaders(apiKey, url),
           buildBody: (messages, overrides) => ({
-            ...buildAnthropicBody(messages, overrides),
+            ...buildAnthropicBodyWithReasoning(config, messages, overrides),
             model,
           }),
           parseStream: parseAnthropicLine,
@@ -559,23 +757,35 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
       // a pasted "/chat/completions" tail. Don't double-append in that
       // case, or we'd POST to ".../chat/completions/chat/completions".
       const base = customEndpoint.replace(/\/+$/, "")
-      const url = /\/chat\/completions$/i.test(base)
-        ? base
-        : `${base}/chat/completions`
+      const url = isAzureOpenAiEndpoint(base)
+        ? buildAzureOpenAiUrl(
+            base,
+            model,
+            config.azureApiVersion ?? AZURE_OPENAI_API_VERSION,
+          )
+        : /\/chat\/completions$/i.test(base)
+          ? base
+          : `${base}/chat/completions`
+      const azure = isAzureOpenAiEndpoint(url)
       return {
         url,
         headers: {
           "Content-Type": JSON_CONTENT_TYPE,
-          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+          ...(apiKey
+            ? azure
+              ? { "api-key": apiKey }
+              : { Authorization: `Bearer ${apiKey}` }
+            : {}),
           // Local OpenAI-compatible servers (LM Studio, llama.cpp,
           // vLLM, LocalAI) often share Ollama's CORS sensitivity.
           // Same rationale as the `ollama` branch above.
-          ...localLlmOriginHeader(),
+          ...(azure ? {} : localLlmOriginHeader()),
         },
-        buildBody: (messages, overrides) => ({
-          ...buildOpenAiBody(messages, overrides),
-          model,
-        }),
+        buildBody: (messages, overrides) => {
+          const body = buildOpenAiCompatibleBody(config, messages, overrides)
+          if (!azure) body.model = model
+          return body
+        },
         parseStream: parseOpenAiLine,
       }
     }

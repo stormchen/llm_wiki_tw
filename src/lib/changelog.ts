@@ -26,6 +26,180 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.16",
+    date: "2026-05-29",
+    highlights: {
+      en: [
+        "Improved knowledge graph performance for large projects with worker-based layout and lighter rendering updates.",
+        "Fixed graph search rendering errors and stabilized graph controls during filtering and search.",
+      ],
+      zh: [
+        "优化大型项目的知识图谱性能，使用后台布局计算并减少渲染更新开销。",
+        "修复图谱搜索时的渲染报错，并提升筛选和搜索过程中的图谱稳定性。",
+      ],
+    },
+  },
+  {
+    version: "0.4.15",
+    date: "2026-05-28",
+    highlights: {
+      en: [
+        "Added AnyTXT as an external information source for Chat and Deep Research, with source labels and snippet previews.",
+        "Added legacy Word .doc support for source import, text extraction, ingest, and preview.",
+        "Improved source import, monitoring, chat search controls, graph controls, wiki generation reliability, and Mermaid rendering stability.",
+        "Fixed raw-source preview, scrolling, editing, embedding configuration, and lint persistence issues.",
+      ],
+      zh: [
+        "新增 AnyTXT 作为 AI 对话和 Deep Research 的外部信息源，并支持来源标记和片段预览。",
+        "新增旧版 Word .doc 支持，可用于资料导入、文本提取、摄取和预览。",
+        "改进资料导入与监控、对话搜索开关、关系图控制、Wiki 生成可靠性和 Mermaid 渲染稳定性。",
+        "修复原始资料预览、滚动、编辑保存、Embedding 配置和检查结果持久化相关问题。",
+      ],
+    },
+  },
+  {
+    version: "0.4.14",
+    date: "2026-05-26",
+    highlights: {
+      en: [
+        "Deep Research can now use AnyTXT local file search alongside web search, with configurable research sources.",
+        "Improved long-document ingestion with more resilient chunked analysis and follow-up research suggestions.",
+        "Fixed provider compatibility and Windows path handling issues.",
+      ],
+      zh: [
+        "Deep Research 现在可结合 AnyTXT 本地文件搜索和网页搜索，并支持配置研究信息来源。",
+        "改进长文档导入：分块分析更稳，并优化补充研究建议生成。",
+        "修复 Provider 兼容性和 Windows 路径处理相关问题。",
+      ],
+    },
+  },
+  {
+    version: "0.4.13",
+    date: "2026-05-24",
+    highlights: {
+      en: [
+        "Improved local API and search reliability, including shared backend search behavior.",
+        "Fixed source handling edge cases for nested folders, non-English paths, and Windows compatibility.",
+        "Fixed search provider configuration and Codex CLI Windows behavior issues.",
+      ],
+      zh: [
+        "改进本地 API 与搜索稳定性，包括统一后端搜索能力。",
+        "修复嵌套资料文件夹、非英文路径和 Windows 兼容相关的资料处理问题。",
+        "修复搜索 Provider 配置和 Codex CLI 在 Windows 下的体验问题。",
+      ],
+    },
+  },
+  {
+    version: "0.4.12",
+    date: "2026-05-19",
+    highlights: {
+      en: [
+        "Fixed SearXNG web search configuration so self-hosted instances work without requiring an API key.",
+      ],
+      zh: [
+        "修复 SearXNG 网页搜索配置：自托管实例不再被错误要求填写 API Key。",
+      ],
+    },
+  },
+  {
+    version: "0.4.11",
+    date: "2026-05-19",
+    highlights: {
+      en: [
+        "Added a local API server for project files, search, graph data, and source rescans, with configurable access control in Settings.",
+        "Unified UI and API search on the Rust backend with keyword and vector retrieval.",
+        "Added Knowledge Graph search with a compact expandable search control and improved empty-result stability.",
+      ],
+      zh: [
+        "新增本地 API Server，可通过接口访问项目文件、搜索、关系图数据和资料重扫，并可在设置中配置访问控制。",
+        "UI 搜索和 API 搜索统一到 Rust 后端，支持关键词与向量检索。",
+        "关系图新增搜索功能，默认使用紧凑的可展开搜索按钮，并改进无结果时的稳定性。",
+      ],
+    },
+  },
+  {
+    version: "0.4.10",
+    date: "2026-05-14",
+    highlights: {
+      en: [
+        "Added configurable source folder monitoring, manual source-folder refresh, and Gemini native embeddings support.",
+        "Fixed source sync, embedding provider compatibility, and settings localization issues.",
+      ],
+      zh: [
+        "新增可配置的资料文件夹监控、手动刷新资料文件夹，以及 Gemini 原生向量嵌入支持。",
+        "修复资料同步、向量 provider 兼容性和设置页本地化相关问题。",
+      ],
+    },
+  },
+  {
+    version: "0.4.9",
+    date: "2026-05-11",
+    highlights: {
+      en: ["Fixed Windows compatibility issues around file paths, source sync, and file deletion."],
+      zh: ["修复 Windows 下文件路径、原始资料同步和文件删除相关的兼容性问题。"],
+    },
+  },
+  {
+    version: "0.4.8",
+    date: "2026-05-11",
+    highlights: {
+      en: [
+        "Project file sync is more complete: external changes in raw sources can be detected, queued persistently, retried, and routed through the same source add/delete lifecycle as in-app actions.",
+        "Source cleanup is more reliable when raw files are deleted outside the app: related wiki pages, index entries, wikilinks, and `related:` references are cleaned consistently, including path-style `.md` links.",
+        "Web search adds SearXNG as a provider, with per-provider configuration and selectable SearXNG search categories.",
+        "Large raw-source folders are easier to browse: the Sources page now renders the file tree progressively while scrolling.",
+        "OpenAI GPT-5 / o-series ingest compatibility is improved by using the supported completion-token parameter shape and avoiding unsupported sampling knobs.",
+      ],
+      zh: [
+        "项目文件同步更完整：外部修改 raw sources 后可被检测、持久化排队、重试，并统一走应用内相同的 source 添加/删除生命周期。",
+        "外部删除原始文件后的清理更可靠：相关 wiki 页面、index 条目、正文 wikilink 和 `related:` 引用会一致清理，也覆盖带路径和 `.md` 后缀的引用。",
+        "网页搜索新增 SearXNG Provider，支持独立配置并选择 SearXNG 搜索分类。",
+        "原始资料目录较大时更易浏览：Sources 页面现在会随滚动渐进渲染文件树。",
+        "改进 OpenAI GPT-5 / o-series 的 ingest 兼容性：使用支持的 completion token 参数，并避免发送不支持的采样参数。",
+      ],
+    },
+  },
+  {
+    version: "0.4.7",
+    date: "2026-05-06",
+    highlights: {
+      en: [
+        "Web search now supports multiple providers: Tavily and SerpApi can be configured separately, with independent API keys and SerpApi search-engine selection.",
+        "Reasoning-model support is improved across providers: thinking controls are available in LLM settings, structured ingest avoids reasoning-only failures, and chat can show model thinking when an endpoint streams it.",
+        "Knowledge graph exploration is cleaner with filters, structural-node hiding, right-click node hide, and reset controls.",
+        "Persian (Farsi) is now available as an output language, with better auto-detection from Arabic, RTL rendering, and per-project target-language preferences.",
+      ],
+      zh: [
+        "网页搜索支持多 Provider：Tavily 和 SerpApi 可分别配置，API Key 独立保存，并支持选择 SerpApi 搜索引擎。",
+        "推理型模型支持增强：LLM 设置里新增 thinking / reasoning 控制，结构化导入会避免只输出思考不输出正文的问题，聊天中也能显示模型流式返回的思考过程。",
+        "关系图新增过滤能力：可隐藏结构性节点、按节点/连接过滤、右键隐藏单个节点，并可一键重置。",
+        "新增 Persian (Farsi) 输出语言支持：自动检测可更好地区分 Persian 和 Arabic，内容按 RTL 显示，Target Language 也改为按项目独立保存。",
+      ],
+    },
+  },
+  {
+    version: "0.4.6",
+    date: "2026-05-01",
+    highlights: {
+      en: [
+        "Right-click delete in the Knowledge tree for entity / concept pages, with full reference cleanup: every body `[[wikilink]]`, `index.md` listing entry, and `related:` frontmatter array pointing at the deleted page is rewritten in the same pass — no more dangling refs left behind for the FrontmatterPanel to flag with a warning icon.",
+        "Mermaid diagrams now render in chat: any ` ```mermaid ` fenced code block in an LLM reply renders as an SVG (lazy-loaded so the diagram engine is only fetched when first encountered). Click a diagram to enlarge with zoom controls; Esc to close.",
+        "Wiki pages whose frontmatter was wrapped in a stray ```yaml … ``` code fence now render correctly: the orphan closing ``` no longer hijacks the body into one giant un-formatted code block.",
+        "Windows: Claude Code CLI provider works again. Detection and chat spawn now resolve through the same path lookup (claude.cmd → claude.exe → claude), so Settings showing \"installed\" matches what chat can actually spawn.",
+        "Fixed: switching the UI language in Settings → Interface, saving, then editing any other settings field and saving again no longer silently reverts the UI back to the previous language.",
+        "All file-delete paths (Sources view source delete, Lint view orphan delete, Knowledge tree right-click) now use the same cleanup helper, so deleting via any of them gets the full sweep — no more inconsistent behaviour where one path cleaned wikilinks but left `related:` frontmatter pointing at the void.",
+      ],
+      zh: [
+        "Knowledge 知识树新增右键删除 entity / concept 页面：删除时自动清理所有引用 —— 文中的 `[[wikilink]]`、`index.md` 的目录条目、其它页面 frontmatter `related:` 数组里指向被删页的 slug，全都在同一步重写干净，不再留断链让 FrontmatterPanel 显示警告图标。",
+        "聊天中支持渲染 Mermaid 图：LLM 回复里的 ` ```mermaid ` 代码块会渲染成 SVG（懒加载，只有遇到第一个图才下载渲染引擎）。点击图可放大查看，支持缩放控制和 Esc 关闭。",
+        "frontmatter 被错误包在 ```yaml … ``` 代码栅栏里的 wiki 页现在能正常渲染：之前下半部全部被孤立的闭 fence 当成一个未关闭的代码块，标题、列表、表格全都不上样式。",
+        "Windows 下 Claude Code CLI 再次可用：探测和 chat 启动现在走同一套路径解析（claude.cmd → claude.exe → claude），不会再出现「Settings 检测到已安装但实际 chat 启动失败」的怪现象。",
+        "修复：在 Settings → Interface 切换 UI 语言保存后，再编辑其它设置并保存，UI 不会再被静默切回原来的语言。",
+        "所有删除入口（Sources 删原始文档、Lint 删孤儿页、Knowledge 树右键）现在都走同一个清理辅助函数，任意路径删除都会触发完整清扫 —— 不会再有一条路径清掉 wikilink 但漏掉 `related:` 留下断引的不一致。",
+      ],
+    },
+  },
+  {
     version: "0.4.5",
     date: "2026-04-30",
     highlights: {

@@ -1,6 +1,8 @@
 import { load } from "@tauri-apps/plugin-store"
 import type { WikiProject } from "@/types/wiki"
-import type { LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProviderConfigs, ProxyConfig } from "@/stores/wiki-store"
+import type { ApiConfig, LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProviderConfigs, ProxyConfig, ScheduledImportConfig, SourceWatchConfig } from "@/stores/wiki-store"
+import { normalizeSourceWatchConfig } from "@/lib/source-watch-config"
+import { normalizePath } from "@/lib/path-utils"
 
 const STORE_NAME = "app-state.json"
 const RECENT_PROJECTS_KEY = "recentProjects"
@@ -133,6 +135,57 @@ export async function loadProxyConfig(): Promise<ProxyConfig | null> {
   return (await store.get<ProxyConfig>(PROXY_CONFIG_KEY)) ?? null
 }
 
+// Local API server config. KEY MUST stay `apiConfig` — the Rust
+// `api_server` module reads `parsed.get("apiConfig")` from this same
+// `app-state.json` on every request (5s cache). Rename one side and
+// the API silently goes back to "no token configured = 401 forever".
+const API_CONFIG_KEY = "apiConfig"
+
+export async function saveApiConfig(config: ApiConfig): Promise<void> {
+  const store = await getStore()
+  await store.set(API_CONFIG_KEY, config)
+  // Force-flush. The 100ms debounce default is fine for cosmetic
+  // settings, but the API token is on a security hot path — a user
+  // generates one, hits Save, then immediately curls the API from
+  // another terminal. We want the disk file to match in-memory
+  // state before the next request reads it.
+  await store.save()
+}
+
+export async function loadApiConfig(): Promise<ApiConfig | null> {
+  const store = await getStore()
+  return (await store.get<ApiConfig>(API_CONFIG_KEY)) ?? null
+}
+
+const SCHEDULED_IMPORT_KEY_PREFIX = "scheduledImportConfig:"
+
+function scheduledImportKey(projectPath: string): string {
+  return `${SCHEDULED_IMPORT_KEY_PREFIX}${normalizePath(projectPath)}`
+}
+
+const SCHEDULED_IMPORT_GLOBAL_KEY = "scheduledImportConfig"
+
+export async function saveScheduledImportConfig(projectPath: string, config: ScheduledImportConfig): Promise<void> {
+  const store = await getStore()
+  await store.set(scheduledImportKey(projectPath), config)
+  await store.save()
+}
+
+export async function loadScheduledImportConfig(projectPath: string): Promise<ScheduledImportConfig | null> {
+  const store = await getStore()
+  const perProject = await store.get<ScheduledImportConfig>(scheduledImportKey(projectPath))
+  if (perProject) return perProject
+  // Migrate from legacy global key (pre-0.4.8)
+  const legacy = await store.get<ScheduledImportConfig>(SCHEDULED_IMPORT_GLOBAL_KEY)
+  if (legacy) {
+    await store.set(scheduledImportKey(projectPath), legacy)
+    await store.delete(SCHEDULED_IMPORT_GLOBAL_KEY)
+    await store.save()
+    return legacy
+  }
+  return null
+}
+
 export async function removeFromRecentProjects(
   path: string
 ): Promise<void> {
@@ -165,18 +218,74 @@ export async function loadLanguage(): Promise<string | null> {
 }
 
 const OUTPUT_LANGUAGE_KEY = "outputLanguage"
+const PROJECT_OUTPUT_LANGUAGE_KEY = "projectOutputLanguages"
+const PROJECT_FILE_SYNC_KEY = "projectFileSyncEnabled"
+const SOURCE_WATCH_CONFIG_KEY = "sourceWatchConfig"
 
-export async function saveOutputLanguage(lang: OutputLanguage): Promise<void> {
+export async function saveOutputLanguage(lang: OutputLanguage, projectId?: string): Promise<void> {
   const store = await getStore()
+  if (projectId) {
+    const existing = (await store.get<Record<string, OutputLanguage>>(PROJECT_OUTPUT_LANGUAGE_KEY)) ?? {}
+    await store.set(PROJECT_OUTPUT_LANGUAGE_KEY, { ...existing, [projectId]: lang })
+  }
   await store.set(OUTPUT_LANGUAGE_KEY, lang)
 }
 
-export async function loadOutputLanguage(): Promise<OutputLanguage | null> {
+export async function loadOutputLanguage(projectId?: string): Promise<OutputLanguage | null> {
   const store = await getStore()
+  if (projectId) {
+    const projectLanguages = await store.get<Record<string, OutputLanguage>>(PROJECT_OUTPUT_LANGUAGE_KEY)
+    return projectLanguages?.[projectId] ?? null
+  }
   return (await store.get<OutputLanguage>(OUTPUT_LANGUAGE_KEY)) ?? null
 }
 
 const NOTION_API_KEY = "notionApiKey"
+
+export async function saveProjectFileSyncEnabled(enabled: boolean, projectId?: string): Promise<void> {
+  const store = await getStore()
+  if (projectId) {
+    const existing = (await store.get<Record<string, boolean>>(PROJECT_FILE_SYNC_KEY)) ?? {}
+    await store.set(PROJECT_FILE_SYNC_KEY, { ...existing, [projectId]: enabled })
+    return
+  }
+  const existing = (await store.get<Record<string, boolean>>(PROJECT_FILE_SYNC_KEY)) ?? {}
+  await store.set(PROJECT_FILE_SYNC_KEY, { ...existing, default: enabled })
+}
+
+export async function loadProjectFileSyncEnabled(projectId?: string): Promise<boolean> {
+  const store = await getStore()
+  const settings = await store.get<Record<string, boolean>>(PROJECT_FILE_SYNC_KEY)
+  if (projectId && settings && typeof settings[projectId] === "boolean") {
+    return settings[projectId]
+  }
+  if (settings && typeof settings.default === "boolean") {
+    return settings.default
+  }
+  return true
+}
+
+export async function saveSourceWatchConfig(config: SourceWatchConfig, projectId?: string): Promise<void> {
+  const store = await getStore()
+  const normalized = normalizeSourceWatchConfig(config)
+  const existing = (await store.get<Record<string, SourceWatchConfig>>(SOURCE_WATCH_CONFIG_KEY)) ?? {}
+  await store.set(SOURCE_WATCH_CONFIG_KEY, {
+    ...existing,
+    [projectId ?? "default"]: normalized,
+  })
+  await store.save()
+}
+
+export async function loadSourceWatchConfig(projectId?: string): Promise<SourceWatchConfig> {
+  const store = await getStore()
+  const settings = await store.get<Record<string, SourceWatchConfig>>(SOURCE_WATCH_CONFIG_KEY)
+  const config = projectId ? settings?.[projectId] : undefined
+  if (config) return normalizeSourceWatchConfig(config)
+  if (settings?.default) return normalizeSourceWatchConfig(settings.default)
+
+  const legacyEnabled = await loadProjectFileSyncEnabled(projectId)
+  return normalizeSourceWatchConfig({ enabled: legacyEnabled })
+}
 
 export async function saveNotionApiKey(key: string): Promise<void> {
   const store = await getStore()
