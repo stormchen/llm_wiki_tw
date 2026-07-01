@@ -42,7 +42,8 @@
     "browse": "選擇父目錄",
     "aiOutputLanguage": "AI 輸出語言",
     "aiOutputLanguageHint": "所有 AI 生成的內容（Wiki 頁面、聊天回覆、Research 結果）都將使用此語言。您可以在設定 → 輸出中稍後變更。",
-    "pickLanguage": "選擇語言..."
+    "pickLanguage": "選擇語言...",
+    "parentDirPlaceholder": "/Users/yourname/projects"
   },
   "templates": {
     "research": {
@@ -90,7 +91,9 @@
     "refreshFolderTooltip": "重新掃描資料夾並同步變更",
     "refreshingFolder": "整理中...",
     "refreshFailed": "重新整理失敗：{{error}}",
-    "loadingMore": "載入更多..."
+    "loadingMore": "載入更多...",
+    "refresh": "重新整理",
+    "refreshFolderHint": "重新掃描原始資料夾並處理新增、修改或刪除的檔案。"
   },
   "chat": {
     "placeholder": "向你的 Wiki 提問...",
@@ -379,7 +382,16 @@
         "costPoint1": "每張新圖觸發一次視覺模型呼叫（約 500-2000 token，取決於模型和 thinking 模式）。",
         "costPoint2": "Caption 按圖片位元組 SHA-256 快取。跨文件重複的 logo / 通用圖表範本只呼叫 ONE 次。",
         "costPoint3": "Rust 端過濾掉小於 100×100 像素的圖，並限制每份文件最多 500 張 —— 病態 PDF 不會無限放大費用。",
-        "costPoint4": "批次 ingest 推薦用本機視覺模型（LM Studio / Ollama 跑 Qwen2.5-VL）；託管視覺 API 留給少量高價值文件。"
+        "costPoint4": "批次 ingest 推薦用本機視覺模型（LM Studio / Ollama 跑 Qwen2.5-VL）；託管視覺 API 留給少量高價值文件。",
+        "azureEndpoint": "Azure 端點",
+        "azureEndpointHint": "使用您的 Azure OpenAI 資源端點。模型欄位填入部署名稱。",
+        "azureApiVersion": "Azure API 版本",
+        "azureApiVersionHint": "作為 Azure OpenAI 的 api-version 查詢參數發送。",
+        "azureModelFamily": "Azure 模型族",
+        "azureModelFamilyAuto": "根據部署名稱自動偵測",
+        "azureModelFamilyGpt5": "GPT-5 / o-series 嚴格參數",
+        "azureModelFamilyHint": "若該部署拒絕 max_tokens 或非預設 temperature，請選擇 GPT-5 / o-series。",
+        "azureDeployment": "部署名稱"
       },
       "webSearch": {
         "title": "外部資訊源",
@@ -618,7 +630,11 @@
         "openDownload": "開啟下載頁",
         "later": "稍後",
         "autoCheck": "應用程式啟動時自動檢查更新（每 6 小時最多一次）",
-        "appDescription": "一個由 LLM 驅動的個人知識庫。原始碼："
+        "appDescription": "一個由 LLM 驅動的個人知識庫。原始碼：",
+        "apiServer": "API 伺服器",
+        "apiDisabled": "已禁用",
+        "apiOpen": "執行中（無認證）",
+        "apiNoToken": "執行中（無 token）"
       },
       "mineru": {
         "title": "MinerU PDF 解析",
@@ -734,5 +750,31 @@
     "minutesAgo": "{{count}} 分鐘前",
     "hoursAgo": "{{count}} 小時前",
     "daysAgo": "{{count}} 天前"
+  },
+  "sidebar": {
+    "knowledge": "知識庫",
+    "files": "檔案"
+  },
+  "research": {
+    "title": "深度研究",
+    "notConfigured": "尚未設定深度研究來源。請前往 設定 → 外部資訊來源 配置網頁搜尋或 AnyTXT。",
+    "activeBadge": "{{running}} 個執行中{{queued, plural, =0 {} other {, {{queued}} 個排隊中}}}",
+    "inputPlaceholder": "輸入研究主題...",
+    "emptyTitle": "暫無研究任務",
+    "emptyHint": "在上方輸入主題，或點擊待審閱中的深度研究",
+    "sourcesCount": "來源 ({{count}})",
+    "anyTxtSource": "AnyTXT 來源",
+    "webSource": "網頁來源",
+    "open": "開啟",
+    "remove": "移除",
+    "status": {
+      "queued": "排隊中",
+      "searching": "正在搜尋來源...",
+      "synthesizing": "正在綜合整理...",
+      "saving": "正在儲存至 wiki...",
+      "saved": "已儲存",
+      "done": "完成",
+      "failed": "失敗"
+    }
   }
 }
