@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  English | <a href="README_CN.md">简体中文</a> | <a href="README_TW.md">繁體中文</a>
+  English | <a href="README_CN.md">简体中文</a> | <a href="README_TW.md">繁體中文</a> | <a href="README_JA.md">日本語</a> | <a href="README_KO.md">한국어</a>
 </p>
 
 ---
@@ -32,6 +32,7 @@
 
 - **Two-Step Chain-of-Thought Ingest** — LLM analyzes first, then generates wiki pages with source traceability and incremental cache
 - **Multimodal Image Ingestion** — extract embedded images from PDFs, generate factual captions with a vision LLM, surface them in image-aware search results with lightbox preview and jump-to-source
+- **Optional MinerU PDF Parsing** — use MinerU cloud parsing for complex PDFs with tables, formulas, and dense layouts; the built-in local parser remains the default
 - **4-Signal Knowledge Graph** — relevance model with direct links, source overlap, Adamic-Adar, and type affinity
 - **Louvain Community Detection** — automatic knowledge cluster discovery with cohesion scoring
 - **Graph Insights** — surprising connections and knowledge gaps with one-click Deep Research
@@ -42,6 +43,7 @@
 - **Async Review System** — LLM flags items for human judgment, predefined actions, pre-generated search queries
 - **Chrome Web Clipper** — one-click web page capture with auto-ingest into knowledge base
 - **Notion Integration** — direct import of Notion pages into markdown format, seamlessly synced to your knowledge base
+- **Local HTTP API + MCP Server + AI Agent Skill** — built-in `127.0.0.1:19828` JSON API and bundled MCP server for hybrid search, file read, graph traversal, and source rescan; ready-made [agent skill](https://github.com/nashsu/llm_wiki_skill) installs into Claude Code / Codex with one command (`npx skills add …`)
 
 ## What is this?
 
@@ -299,13 +301,15 @@ The original focuses on text/markdown. We support structured extraction preservi
 
 | Format | Method |
 |--------|--------|
-| PDF | pdf-extract (Rust) with file caching |
+| PDF | Built-in pdf-extract (Rust) with file caching; optional MinerU cloud parsing for tables, formulas, and complex layouts |
 | DOCX | docx-rs — headings, bold/italic, lists, tables → structured Markdown |
 | PPTX | ZIP + XML — slide-by-slide extraction with heading/list structure |
 | XLSX/XLS/ODS | calamine — proper cell types, multi-sheet support, Markdown tables |
 | Images | Native preview (png, jpg, gif, webp, svg, etc.) |
 | Video/Audio | Built-in player |
 | Web clips | Readability.js + Turndown.js → clean Markdown |
+
+> MinerU is optional. When enabled, PDF files are uploaded to MinerU cloud for parsing; keep the built-in parser for sensitive documents. If MinerU fails, LLM Wiki falls back to the built-in parser. MinerU usage is subject to its file size, page count, and quota limits.
 
 ### 15. File Deletion with Cascade Cleanup
 
@@ -357,7 +361,7 @@ The original is platform-agnostic (abstract pattern). We handle concrete cross-p
 | Graph | sigma.js + graphology + ForceAtlas2 |
 | Search | Tokenized search + graph relevance + optional vector (LanceDB) |
 | Vector DB | LanceDB (Rust, embedded, optional) |
-| PDF | pdf-extract |
+| PDF | pdf-extract + optional MinerU cloud parser |
 | Office | docx-rs + calamine |
 | i18n | react-i18next |
 | State | Zustand |
@@ -401,12 +405,44 @@ npm run tauri build    # Production build
 
 1. Launch the app → Create a new project (choose a template)
 2. Go to **Settings** → Configure your LLM provider (API key + model)
-3. Go to **Sources** → Import documents (PDF, DOCX, MD, etc.)
-4. Watch the **Activity Panel** — LLM automatically builds wiki pages
-5. Use **Chat** to query your knowledge base
-6. Browse the **Knowledge Graph** to see connections
-7. Check **Review** for items needing your attention
-8. Run **Lint** periodically to maintain wiki health
+3. Optional: configure **Web Search** providers and source folder auto-watch in Settings
+4. Go to **Sources** → Import documents (PDF, DOCX, MD, etc.)
+5. Watch the **Activity Panel** — LLM automatically builds wiki pages
+6. Use **Chat** to query your knowledge base
+7. Browse the **Knowledge Graph** to see connections
+8. Check **Review** for items needing your attention
+9. Run **Lint** periodically to maintain wiki health
+
+## Local HTTP API + MCP Server + AI Agent Skill
+
+LLM Wiki ships a built-in local HTTP API at `http://127.0.0.1:19828` (token-protected, `127.0.0.1`-only) so external tools — including AI agents like **Claude Code**, **Codex**, or any HTTP-capable script — can query your wiki:
+
+- `GET /api/v1/health` — server status (no auth)
+- `GET /api/v1/projects` — list projects
+- `GET /api/v1/projects/{id}/files` / `files/content` — read files and content
+- `GET /api/v1/projects/{id}/reviews?status=unresolved` — export Review tab items for wiki maintenance (`status`: `unresolved`, `resolved`, or `all`; optional `type` and `limit`)
+- `PATCH /api/v1/projects/{id}/reviews/{reviewId}` — update one Review item (JSON body `{ "resolved": true, "action": "label" }`; `resolved` defaults to true, pass false to reopen)
+- `POST /api/v1/projects/{id}/reviews/resolve` — bulk-resolve Review items (JSON body `{ "ids": [...], "action": "label" }`), returns `{ resolved, notFound, count }`; the Review tab's Refresh button re-reads the result from disk
+- `POST /api/v1/projects/{id}/search` — **hybrid** retrieval (keyword + vector) returning `mode`, `tokenHits`, `vectorHits`, per-result `vectorScore`
+- `GET /api/v1/projects/{id}/graph` — wikilinks graph
+- `POST /api/v1/projects/{id}/sources/rescan` — trigger a backend rescan
+
+Enable the API, generate a token, and choose whether local unauthenticated access is allowed in **Settings → API + MCP**.
+
+For MCP-compatible clients, LLM Wiki also includes a local MCP server in `mcp-server/`. After building it with `npm run mcp:build`, **Settings → API + MCP** shows a copyable MCP client configuration with the correct local path for your machine. The MCP tools call the same API surface, so agent clients can list projects, read files, export unresolved Review items, run hybrid search, inspect the graph, and trigger source rescans without custom HTTP glue code.
+
+### Plug your AI agent in with one command
+
+A ready-made **agent skill** for LLM Wiki lives in its own repo. Install it into Claude Code / Codex / any skills-compatible runtime:
+
+```bash
+npx skills add https://github.com/nashsu/llm_wiki_skill.git --skill llm_wiki_skill
+```
+
+After install, the agent can answer prompts like "what does my LLM Wiki say about X", "search my 知识库 for Y", "show the neighborhood of node Z in my wiki graph", and "rescan my wiki sources" by talking to your locally-running app — read-only by default, citing wiki page paths so you can verify in-app.
+
+- **Skill repo**: <https://github.com/nashsu/llm_wiki_skill>
+- **Trigger discipline**: it intentionally does **not** trigger on generic "search my notes" / "check my Obsidian / Notion / Logseq" — only when you explicitly name LLM Wiki / `my wiki` / `知识库`.
 
 ## Project Structure
 
