@@ -22,8 +22,39 @@ const MEDIA_EXTS: &[&str] = &[
 ];
 const LEGACY_DOC_EXTS: &[&str] = &["ppt", "pages", "numbers", "key", "epub"];
 
+fn require_absolute_path(operation: &str, path: &str) -> Result<(), String> {
+    if is_absolute_path_cross_platform(path) {
+        Ok(())
+    } else {
+        Err(format!(
+            "{operation} requires an absolute path; got relative path '{}'",
+            path
+        ))
+    }
+}
+
+fn is_absolute_path_cross_platform(path: &str) -> bool {
+    if path.is_empty() {
+        return false;
+    }
+    if Path::new(path).is_absolute() {
+        return true;
+    }
+
+    let bytes = path.as_bytes();
+    if bytes.len() >= 3
+        && bytes[1] == b':'
+        && bytes[0].is_ascii_alphabetic()
+        && matches!(bytes[2], b'/' | b'\\')
+    {
+        return true;
+    }
+
+    path.starts_with(r"\\") || path.starts_with("//")
+}
+
 #[tauri::command]
-pub async fn read_file(path: String) -> Result<String, String> {
+pub async fn read_file(path: String, extract_images: Option<bool>) -> Result<String, String> {
     // `spawn_blocking` is REQUIRED, not a perf nicety. The body does
     // synchronous PDF/Office text extraction (pdfium FFI, calamine,
     // zip + image decode) that can take 10s+ on big files. Running
@@ -46,8 +77,10 @@ pub async fn read_file(path: String) -> Result<String, String> {
                 return Ok(cached);
             }
 
+            let include_images = extract_images.unwrap_or(true);
+
             match ext.as_str() {
-                "pdf" => extract_pdf_text(&path),
+                "pdf" => extract_pdf_text(&path, include_images),
                 e if OFFICE_EXTS.contains(&e) => extract_office_text(&path, e),
                 e if IMAGE_EXTS.contains(&e) => {
                     let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
@@ -98,7 +131,7 @@ pub async fn preprocess_file(path: String) -> Result<String, String> {
                 .to_lowercase();
 
             let text = match ext.as_str() {
-                "pdf" => extract_pdf_text(&path)?,
+                "pdf" => extract_pdf_text(&path, false)?,
                 e if OFFICE_EXTS.contains(&e) => extract_office_text(&path, e)?,
                 _ => return Ok("no preprocessing needed".to_string()),
             };
@@ -317,69 +350,51 @@ pub(crate) fn pdfium() -> Result<&'static pdfium_render::prelude::Pdfium, String
         .map_err(|e| e.clone())
 }
 
-/// Extract a PDF as markdown — text + per-page image references
-/// when the file lives under a project's `raw/sources/` (the
-/// layout the import pipeline produces). Falls back to text-only
-/// when the PDF is opened from anywhere else.
-///
-/// Layout heuristic: a PDF at `<project>/raw/sources/<name>.pdf`
-/// implies project root = `<project>` and image dest =
-/// `<project>/wiki/media/<name>/`. We use absolute filesystem paths
-/// in the emitted `![](url)` references so the markdown previews
-/// (raw-source view AND wiki-summary view) both render via
-/// `convertFileSrc` without anyone having to know which directory
-/// they're rendering from.
+/// Extract a PDF as markdown. When `include_images` is true and the PDF
+/// is opened directly from `<project>/raw/sources`, this also writes
+/// preview images to `<project>/wiki/media/<file-stem>/` and emits image
+/// markdown. Ingest passes `include_images=false` and owns image
+/// extraction through the canonical source-identity slug, preventing a
+/// duplicate `<file-stem>` media folder for nested sources.
 ///
 /// Lock: delegates to `extract_pdf_markdown`, which acquires the
 /// pdfium lock internally. We must NOT take it here too —
 /// `std::sync::Mutex` is non-reentrant.
-fn extract_pdf_text(path: &str) -> Result<String, String> {
+fn extract_pdf_text(path: &str, include_images: bool) -> Result<String, String> {
     use crate::commands::extract_images::{extract_pdf_markdown, ExtractOptions};
 
-    let p = Path::new(path);
-    let parent = p.parent();
-    let stem = p
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_string();
+    if include_images {
+        let p = Path::new(path);
+        let parent = p.parent();
+        let stem = p
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
 
-    // The path-component check uses `ends_with` on `Path` which
-    // matches the LAST component (not a string-suffix check), so
-    // `/foo/raw/sources/bar.pdf` correctly identifies as under
-    // `raw/sources/` while `/foo/braw/source-thing/bar.pdf` does
-    // not.
-    let parent_is_sources = parent.map(|d| d.ends_with("sources")).unwrap_or(false);
-    let raw_dir = parent.and_then(|d| d.parent());
-    let raw_is_raw = raw_dir.map(|d| d.ends_with("raw")).unwrap_or(false);
-    let project_root = if parent_is_sources && raw_is_raw {
-        raw_dir.and_then(|d| d.parent())
-    } else {
-        None
-    };
+        let parent_is_sources = parent.map(|d| d.ends_with("sources")).unwrap_or(false);
+        let raw_dir = parent.and_then(|d| d.parent());
+        let raw_is_raw = raw_dir.map(|d| d.ends_with("raw")).unwrap_or(false);
+        let project_root = if parent_is_sources && raw_is_raw {
+            raw_dir.and_then(|d| d.parent())
+        } else {
+            None
+        };
 
-    if let Some(root) = project_root {
-        if !stem.is_empty() {
-            let media_dir = root.join("wiki").join("media").join(&stem);
-            // Forward-slash absolute path so we don't ship `\` into
-            // markdown that the JS-side resolver would then have to
-            // re-normalize. The resolver does handle backslashes,
-            // but emitting clean URLs in the first place avoids
-            // surprises in cache files we save to disk.
-            let url_prefix = media_dir.to_string_lossy().replace('\\', "/");
-            return extract_pdf_markdown(
-                path,
-                Some(&media_dir),
-                &url_prefix,
-                &ExtractOptions::default(),
-            );
+        if let Some(root) = project_root {
+            if !stem.is_empty() {
+                let media_dir = root.join("wiki").join("media").join(&stem);
+                let url_prefix = media_dir.to_string_lossy().replace('\\', "/");
+                return extract_pdf_markdown(
+                    path,
+                    Some(&media_dir),
+                    &url_prefix,
+                    &ExtractOptions::default(),
+                );
+            }
         }
     }
 
-    // PDFs not under <project>/raw/sources/ — text-only fallback.
-    // Skip the image side of the extraction entirely (no media
-    // destination → extract_pdf_markdown only writes text + page
-    // headers, no pdfium image-object enumeration).
     extract_pdf_markdown(path, None, "", &ExtractOptions::default())
 }
 
@@ -957,6 +972,7 @@ fn extract_odf_text(archive: &mut zip::ZipArchive<fs::File>) -> Result<String, S
 pub async fn write_file(path: String, contents: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("write_file", || {
+            require_absolute_path("write_file", &path)?;
             let p = Path::new(&path);
             if let Some(parent) = p.parent() {
                 fs::create_dir_all(parent)
@@ -974,9 +990,36 @@ pub async fn write_file(path: String, contents: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn write_file_base64(path: String, base64: String) -> Result<(), String> {
+    use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+
+    tauri::async_runtime::spawn_blocking(move || {
+        run_guarded("write_file_base64", || {
+            require_absolute_path("write_file_base64", &path)?;
+            let bytes = B64
+                .decode(base64.as_bytes())
+                .map_err(|e| format!("Invalid base64 for '{}': {}", path, e))?;
+            let p = Path::new(&path);
+            if let Some(parent) = p.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|e| format!("Failed to create parent dirs for '{}': {}", path, e))?;
+            }
+            file_sync::mark_app_write_path(p);
+            fs::write(&path, bytes)
+                .map_err(|e| format!("Failed to write binary file '{}': {}", path, e))?;
+            file_sync::mark_app_write_path(p);
+            Ok(())
+        })
+    })
+    .await
+    .map_err(|e| format!("write_file_base64 blocking task join error: {e}"))?
+}
+
+#[tauri::command]
 pub async fn write_file_atomic(path: String, contents: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("write_file_atomic", || {
+            require_absolute_path("write_file_atomic", &path)?;
             let p = Path::new(&path);
             if let Some(parent) = p.parent() {
                 fs::create_dir_all(parent)
@@ -1017,8 +1060,26 @@ pub async fn write_file_atomic(path: String, contents: String) -> Result<(), Str
     .map_err(|e| format!("write_file_atomic blocking task join error: {e}"))?
 }
 
+/// Whether a directory entry should appear in a listing.
+///
+/// Hidden (dot-prefixed) entries are shown only when `include_hidden`
+/// is set. That flag is reserved for the `raw/sources` content area,
+/// where dotfolders like `.claude` / `.codex` are legitimate sources
+/// the user deliberately added. Every other caller keeps hiding dot
+/// entries so internal state (`.llm-wiki`, `.git`), caches, and secrets
+/// (`.env`) never leak into trees or the ingest candidate set.
+fn entry_is_visible(name: &str, include_hidden: bool) -> bool {
+    include_hidden || !name.starts_with('.')
+}
+
 #[tauri::command]
-pub async fn list_directory(path: String) -> Result<Vec<FileNode>, String> {
+pub async fn list_directory(
+    path: String,
+    include_hidden: Option<bool>,
+    max_depth: Option<usize>,
+) -> Result<Vec<FileNode>, String> {
+    let include_hidden = include_hidden.unwrap_or(false);
+    let max_depth = max_depth.unwrap_or(30).clamp(1, 30);
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("list_directory", || {
             let p = Path::new(&path);
@@ -1028,7 +1089,7 @@ pub async fn list_directory(path: String) -> Result<Vec<FileNode>, String> {
             if !p.is_dir() {
                 return Err(format!("Path is not a directory: '{}'", path));
             }
-            let nodes = build_tree(p, 0, 30)?;
+            let nodes = build_tree(p, 0, max_depth, include_hidden)?;
             Ok(nodes)
         })
     })
@@ -1036,7 +1097,12 @@ pub async fn list_directory(path: String) -> Result<Vec<FileNode>, String> {
     .map_err(|e| format!("list_directory blocking task join error: {e}"))?
 }
 
-fn build_tree(dir: &Path, depth: usize, max_depth: usize) -> Result<Vec<FileNode>, String> {
+fn build_tree(
+    dir: &Path,
+    depth: usize,
+    max_depth: usize,
+    include_hidden: bool,
+) -> Result<Vec<FileNode>, String> {
     if depth >= max_depth {
         return Ok(vec![]);
     }
@@ -1045,11 +1111,10 @@ fn build_tree(dir: &Path, depth: usize, max_depth: usize) -> Result<Vec<FileNode
         .map_err(|e| format!("Failed to read directory '{}': {}", dir.display(), e))?
         .filter_map(|entry| entry.ok())
         .filter(|entry| {
-            // Skip dotfiles
             entry
                 .file_name()
                 .to_str()
-                .map(|n| !n.starts_with('.'))
+                .map(|n| entry_is_visible(n, include_hidden))
                 .unwrap_or(false)
         })
         .collect();
@@ -1078,7 +1143,7 @@ fn build_tree(dir: &Path, depth: usize, max_depth: usize) -> Result<Vec<FileNode
         let is_dir = entry_path.is_dir();
 
         let children = if is_dir {
-            let kids = build_tree(&entry_path, depth + 1, max_depth)?;
+            let kids = build_tree(&entry_path, depth + 1, max_depth, include_hidden)?;
             if kids.is_empty() {
                 None
             } else {
@@ -1381,6 +1446,7 @@ fn collect_related_pages(
 pub async fn create_directory(path: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("create_directory", || {
+            require_absolute_path("create_directory", &path)?;
             fs::create_dir_all(&path)
                 .map_err(|e| format!("Failed to create directory '{}': {}", path, e))
         })
@@ -1568,7 +1634,7 @@ mod tests {
 
         for (name, bytes) in payloads {
             let path = tmp_pdf_with_bytes(bytes);
-            let result = read_file(path.clone()).await;
+            let result = read_file(path.clone(), None).await;
             let _ = fs::remove_file(&path);
             eprintln!(
                 "[{name}] => {:?}",
@@ -1583,7 +1649,11 @@ mod tests {
     /// through read_file's guarded path.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn read_file_returns_err_on_missing_file_instead_of_panicking() {
-        let result = read_file("/nonexistent/path/that/does/not/exist.pdf".to_string()).await;
+        let result = read_file(
+            "/nonexistent/path/that/does/not/exist.pdf".to_string(),
+            None,
+        )
+        .await;
         assert!(result.is_err() || result.is_ok()); // must at least return
     }
 
@@ -1592,6 +1662,45 @@ mod tests {
         let result = extract_doc_with_office_oxide("/nonexistent/path/that/does/not/exist.doc");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Failed to parse DOC"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn write_file_base64_writes_decoded_binary_bytes() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "llm-wiki-base64-{}.bin",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let path_str = path.to_string_lossy().to_string();
+
+        write_file_base64(path_str.clone(), "AAECA/8=".to_string())
+            .await
+            .unwrap();
+
+        let bytes = fs::read(&path).unwrap();
+        let _ = fs::remove_file(&path);
+        assert_eq!(bytes, vec![0, 1, 2, 3, 255]);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn write_file_base64_rejects_invalid_base64_and_relative_paths() {
+        let invalid = write_file_base64(
+            std::env::temp_dir()
+                .join("llm-wiki-invalid-base64.bin")
+                .to_string_lossy()
+                .to_string(),
+            "not!!base64".to_string(),
+        )
+        .await;
+        assert!(invalid.is_err());
+        assert!(invalid.unwrap_err().contains("Invalid base64"));
+
+        let relative = write_file_base64("relative.bin".to_string(), "AA==".to_string()).await;
+        assert!(relative.is_err());
+        assert!(relative.unwrap_err().contains("requires an absolute path"));
     }
 
     /// Ad-hoc probe: run the production PDF extraction path against every
@@ -1649,7 +1758,7 @@ mod tests {
             // Call extract_pdf_text directly (not read_file) so we bypass
             // the .cache sibling dir and always exercise the parser.
             let path_str = path.to_string_lossy().to_string();
-            let result = std::panic::catch_unwind(|| extract_pdf_text(&path_str));
+            let result = std::panic::catch_unwind(|| extract_pdf_text(&path_str, true));
             match result {
                 Ok(Ok(text)) => {
                     ok += 1;
@@ -1931,6 +2040,84 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn build_tree_hides_dot_entries_by_default_and_includes_them_when_asked() {
+        let root = make_temp_dir("build-tree-hidden");
+        fs::create_dir_all(root.join(".claude")).unwrap();
+        fs::write(root.join(".claude/CLAUDE.md"), "x").unwrap();
+        fs::create_dir_all(root.join("visible")).unwrap();
+        fs::write(root.join("visible/doc.md"), "y").unwrap();
+        fs::write(root.join(".env"), "secret").unwrap();
+
+        // Default: dot entries (incl. .env) hidden, normal entries shown.
+        let hidden = build_tree(&root, 0, 30, false).unwrap();
+        let hidden_names: Vec<&str> = hidden.iter().map(|n| n.name.as_str()).collect();
+        assert!(hidden_names.contains(&"visible"));
+        assert!(
+            !hidden_names.iter().any(|n| n.starts_with('.')),
+            "no dot entries should leak by default: {hidden_names:?}"
+        );
+
+        // include_hidden=true: dotfolders/dotfiles present.
+        let shown = build_tree(&root, 0, 30, true).unwrap();
+        let shown_names: Vec<&str> = shown.iter().map(|n| n.name.as_str()).collect();
+        assert!(shown_names.contains(&".claude"));
+        assert!(shown_names.contains(&".env"));
+        assert!(shown_names.contains(&"visible"));
+
+        // The dotfolder's children come through too.
+        let claude = shown.iter().find(|n| n.name == ".claude").unwrap();
+        let kids = claude
+            .children
+            .as_ref()
+            .expect(".claude should have children");
+        assert!(kids.iter().any(|n| n.name == "CLAUDE.md"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn build_tree_respects_max_depth_for_shallow_listing() {
+        let root = make_temp_dir("build-tree-depth");
+        fs::create_dir_all(root.join("a/b")).unwrap();
+        fs::write(root.join("a/b/deep.md"), "x").unwrap();
+
+        let shallow = build_tree(&root, 0, 1, false).unwrap();
+        let a = shallow.iter().find(|n| n.name == "a").unwrap();
+        assert!(a.is_dir);
+        assert!(a.children.is_none(), "max_depth=1 must not load grandchildren");
+
+        let deeper = build_tree(&root, 0, 3, false).unwrap();
+        let a = deeper.iter().find(|n| n.name == "a").unwrap();
+        let b = a
+            .children
+            .as_ref()
+            .and_then(|children| children.iter().find(|n| n.name == "b"))
+            .expect("max_depth=3 should include nested directory");
+        let files = b.children.as_ref().expect("b should include deep file");
+        assert!(files.iter().any(|n| n.name == "deep.md"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reject_relative_write_paths_before_touching_cwd() {
+        assert!(require_absolute_path("write_file", "wiki/sources/stray.md").is_err());
+        assert!(require_absolute_path("write_file", "./wiki/sources/stray.md").is_err());
+    }
+
+    #[test]
+    fn allow_absolute_write_paths() {
+        assert!(require_absolute_path("write_file", "/tmp/project/wiki/sources/page.md").is_ok());
+        assert!(require_absolute_path("write_file", "C:/project/wiki/sources/page.md").is_ok());
+        assert!(require_absolute_path("write_file", r"C:\project\wiki\sources\page.md").is_ok());
+        assert!(
+            require_absolute_path("write_file", r"\\server\share\wiki\sources\page.md").is_ok()
+        );
+        assert!(require_absolute_path("write_file", "//server/share/wiki/sources/page.md").is_ok());
+        assert!(require_absolute_path("write_file", "C:wiki/sources/page.md").is_err());
     }
 
     /// Pull the inner sync `copy_recursive` body out from

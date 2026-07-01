@@ -108,10 +108,17 @@ vi.mock("./llm-client", () => ({
   }),
 }))
 
-import { autoIngest, executeIngestWrites } from "./ingest"
+vi.mock("./mineru", () => ({
+  parseWithMineru: vi.fn(),
+  parseWithMineruResult: vi.fn(),
+}))
+
+import { autoIngest, executeIngestWrites, hasMineruImageRefs } from "./ingest"
 import { streamChat } from "./llm-client"
+import { parseWithMineruResult } from "./mineru"
 
 const mockStreamChat = vi.mocked(streamChat)
+const mockParseWithMineru = vi.mocked(parseWithMineruResult)
 
 describe("autoIngest source summary paths", () => {
   let tmp: { path: string; cleanup: () => Promise<void> } | undefined
@@ -123,12 +130,13 @@ describe("autoIngest source summary paths", () => {
     generationSuffix = ""
     abortDuringReview = null
     mockStreamChat.mockClear()
+    mockParseWithMineru.mockReset()
     tmp = await createTempProject("same-basename-sources")
 
     await writeFileRaw(`${tmp.path}/purpose.md`, "# Purpose\n\nTrack project config files.\n")
     await writeFileRaw(
       `${tmp.path}/schema.md`,
-      "# Schema\n\nEach source needs its own source summary page.\n",
+      "# Schema\n\nEach source needs its own source summary page.\n\n## Page Types\n| goal | wiki/goals/ | Outcomes |\n| habit | wiki/habits/ | Behaviours |",
     )
     await writeFileRaw(`${tmp.path}/wiki/index.md`, "# Index\n")
     await writeFileRaw(`${tmp.path}/wiki/overview.md`, "# Overview\n")
@@ -176,6 +184,21 @@ describe("autoIngest source summary paths", () => {
   afterEach(async () => {
     await tmp?.cleanup()
     tmp = undefined
+  })
+
+  it("detects MinerU image refs with URL-encoded source summary slugs", () => {
+    expect(hasMineruImageRefs(
+      "![chart](media/%E6%B1%A1%E6%B0%B4%20paper/mineru/images/chart%281%29.png)",
+      "污水 paper",
+    )).toBe(true)
+    expect(hasMineruImageRefs(
+      "![chart](media/污水 paper/mineru/images/chart.png)",
+      "污水 paper",
+    )).toBe(true)
+    expect(hasMineruImageRefs(
+      "![chart](media/other/mineru/images/chart.png)",
+      "污水 paper",
+    )).toBe(false)
   })
 
   it("keeps distinct source summaries for same-basename files in different source subdirectories", async () => {
@@ -313,6 +336,10 @@ describe("autoIngest source summary paths", () => {
       String(messages?.[0]?.content ?? "").startsWith("You are analyzing a long source document"),
     )
     expect(chunkCalls.length).toBeGreaterThan(1)
+    const chunkSystemPrompt = String(chunkCalls[0][1]?.[0]?.content ?? "")
+    expect(chunkSystemPrompt).toContain("wiki/goals/")
+    expect(chunkSystemPrompt).toContain("Schema-Typed Candidates")
+    expect(chunkSystemPrompt).toContain("never invent goals")
     expect(String(chunkCalls[0][1]?.[1]?.content ?? "")).toContain("## MAIN CHUNK TO ANALYZE")
     expect(String(chunkCalls[1][1]?.[1]?.content ?? "")).toContain(
       "Digest after chunk 1: stable context 1.",
@@ -480,7 +507,70 @@ describe("autoIngest source summary paths", () => {
         controller.signal,
         "project-a",
       ),
-    ).rejects.toThrow("AbortError")
+    ).rejects.toThrow("Ingest cancelled")
+  })
+
+  it("falls back to built-in PDF extraction when MinerU fails for a non-cancelled ingest", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    sourceMarkers = ["mineru fallback source"]
+    await writeFileRaw(`${tmp.path}/raw/sources/project-a/report.pdf`, "pdf fallback text\n")
+    useWikiStore.setState({
+      mineruConfig: {
+        enabled: true,
+        token: "mineru-token",
+        modelVersion: "vlm",
+      },
+    })
+    mockParseWithMineru.mockRejectedValueOnce(new Error("network failure from MinerU"))
+    const updateSpy = vi.spyOn(useActivityStore.getState(), "updateItem")
+
+    const written = await autoIngest(
+      tmp.path,
+      `${tmp.path}/raw/sources/project-a/report.pdf`,
+      useWikiStore.getState().llmConfig,
+      undefined,
+      "project-a",
+    )
+
+    expect(written.length).toBeGreaterThan(0)
+    expect(mockParseWithMineru).toHaveBeenCalled()
+    expect(
+      updateSpy.mock.calls.some(([, updates]) =>
+        updates.detail?.includes("falling back to built-in PDF extraction"),
+      ),
+    ).toBe(true)
+    updateSpy.mockRestore()
+  })
+
+  it("does not fall back to built-in PDF extraction when MinerU is cancelled", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    await writeFileRaw(`${tmp.path}/raw/sources/project-a/cancelled.pdf`, "pdf fallback text\n")
+    useWikiStore.setState({
+      mineruConfig: {
+        enabled: true,
+        token: "mineru-token",
+        modelVersion: "vlm",
+      },
+    })
+    const controller = new AbortController()
+    controller.abort()
+    mockParseWithMineru.mockRejectedValueOnce(new Error("MinerU parsing cancelled"))
+
+    await expect(
+      autoIngest(
+        tmp.path,
+        `${tmp.path}/raw/sources/project-a/cancelled.pdf`,
+        useWikiStore.getState().llmConfig,
+        controller.signal,
+        "project-a",
+      ),
+    ).rejects.toThrow("Ingest cancelled")
+
+    expect(
+      useActivityStore.getState().items.some((item) =>
+        item.detail?.includes("falling back to built-in PDF extraction"),
+      ),
+    ).toBe(false)
   })
 
   it("canonicalizes interactive source summary paths and sources frontmatter", async () => {
@@ -522,11 +612,11 @@ describe("autoIngest source summary paths", () => {
     )
 
     const canonicalSummary = `wiki/sources/${sourceSummarySlugFromIdentity("project-a/config.yaml")}.md`
-    const canonicalSummaryPath = path.join(tmp.path, canonicalSummary)
+    const canonicalSummaryPath = path.join(tmp.path, canonicalSummary).replace(/\\/g, "/")
     const staleSummaryPath = path.join(tmp.path, "wiki", "sources", "config.md")
     const content = await fs.readFile(canonicalSummaryPath, "utf8")
 
-    expect(writtenPaths).toEqual([canonicalSummaryPath])
+    expect(writtenPaths.map((p) => p.replace(/\\/g, "/"))).toEqual([canonicalSummaryPath])
     await expect(fs.access(staleSummaryPath)).rejects.toThrow()
     expect(content).toContain('sources: ["project-a/config.yaml"]')
   })

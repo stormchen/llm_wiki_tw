@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useWikiStore } from "@/stores/wiki-store"
-import { listDirectory } from "@/commands/fs"
-import { normalizePath } from "@/lib/path-utils"
+import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 import { IconSidebar } from "./icon-sidebar"
 import { SidebarPanel } from "./sidebar-panel"
 import { ContentArea } from "./content-area"
-import { PreviewPanel } from "./preview-panel"
 import { ResearchPanel } from "./research-panel"
 import { ActivityPanel } from "./activity-panel"
 import { useResearchStore } from "@/stores/research-store"
 import { ErrorBoundary } from "@/components/error-boundary"
+import { getAppLayoutVisibility } from "./app-layout-visibility"
 
 interface AppLayoutProps {
   onSwitchProject: () => void
@@ -17,10 +16,8 @@ interface AppLayoutProps {
 
 export function AppLayout({ onSwitchProject }: AppLayoutProps) {
   const project = useWikiStore((s) => s.project)
-  const selectedFile = useWikiStore((s) => s.selectedFile)
   const activeView = useWikiStore((s) => s.activeView)
   const researchPanelOpen = useResearchStore((s) => s.panelOpen)
-  const setFileTree = useWikiStore((s) => s.setFileTree)
   const [leftWidth, setLeftWidth] = useState(220)
   const [rightWidth, setRightWidth] = useState(400)
   const isDraggingLeft = useRef(false)
@@ -29,13 +26,11 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
 
   const loadFileTree = useCallback(async () => {
     if (!project) return
-    try {
-      const tree = await listDirectory(normalizePath(project.path))
-      setFileTree(tree)
-    } catch (err) {
-      console.error("Failed to load file tree:", err)
-    }
-  }, [project, setFileTree])
+    await refreshProjectFileTree(project.path, {
+      projectId: project.id,
+      clearDisplayTreeFirst: true,
+    })
+  }, [project])
 
   useEffect(() => {
     loadFileTree()
@@ -82,72 +77,59 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
     []
   )
 
-  // Settings is a full-width admin view — the file tree / activity panel
-  // are irrelevant there and their narrow column makes the settings form
-  // cramped. Hide both the left sidebar (and the file preview on the
-  // right) so the settings screen uses the whole content area.
-  const isSettings = activeView === "settings"
-  const hasRightPanel = !isSettings && !!(selectedFile || researchPanelOpen)
+  // Settings and Chat are standalone views. Hide the project file tree,
+  // activity strip, and optional right research panel there so those
+  // screens use the whole work area.
+  const { showLeftPanel, hasRightPanel } = getAppLayoutVisibility(activeView, researchPanelOpen)
 
   return (
-    <div className="flex h-screen flex-col bg-background text-foreground">
+    <div className="flex h-full flex-col bg-background text-foreground">
       <div className="flex min-h-0 flex-1">
         <IconSidebar onSwitchProject={onSwitchProject} />
-        <div ref={containerRef} className="flex min-w-0 flex-1 overflow-hidden">
-        {!isSettings && (
-          <>
-            {/* Left: File tree + Activity */}
-            <div
-              className="flex shrink-0 flex-col overflow-hidden border-r"
-              style={{ width: leftWidth }}
-            >
-              <div className="flex-1 overflow-hidden">
-                <SidebarPanel />
+        <div ref={containerRef} className="relative flex min-w-0 flex-1 overflow-hidden">
+          {showLeftPanel && (
+            <>
+              {/* Left: File tree + Activity */}
+              <div
+                className="flex shrink-0 flex-col overflow-hidden border-r"
+                style={{ width: leftWidth }}
+              >
+                <div className="flex-1 overflow-hidden">
+                  <SidebarPanel />
+                </div>
+                <ActivityPanel />
               </div>
-              <ActivityPanel />
-            </div>
-            <div
-              className="w-1.5 shrink-0 cursor-col-resize bg-border/40 transition-colors hover:bg-primary/30 active:bg-primary/40"
-              onMouseDown={startDrag("left")}
-            />
-          </>
-        )}
+              <div
+                className="w-1.5 shrink-0 cursor-col-resize bg-border/40 transition-colors hover:bg-primary/30 active:bg-primary/40"
+                onMouseDown={startDrag("left")}
+              />
+            </>
+          )}
 
-        {/* Center: Chat or view (sources/settings/review) */}
-        <div className="min-w-0 flex-1 overflow-hidden">
-          <ErrorBoundary>
-            <ContentArea />
-          </ErrorBoundary>
-        </div>
+          {/* Center: Chat, wiki preview, or tool view */}
+          <div className="min-w-0 flex-1 overflow-hidden">
+            <ErrorBoundary>
+              <ContentArea />
+            </ErrorBoundary>
+          </div>
 
-        {/* Right panels */}
-        {hasRightPanel && (
-          <>
-            <div
-              className="w-1.5 shrink-0 cursor-col-resize bg-border/40 transition-colors hover:bg-primary/30 active:bg-primary/40"
-              onMouseDown={startDrag("right")}
-            />
-            <div
-              className="flex shrink-0 flex-col overflow-hidden border-l"
-              style={{ width: rightWidth }}
-            >
-              <ErrorBoundary>
-                {/* File preview on top (if file selected) */}
-                {selectedFile && (
-                  <div className={researchPanelOpen ? "flex-1 overflow-hidden border-b" : "flex-1 overflow-hidden"}>
-                    <PreviewPanel />
-                  </div>
-                )}
-                {/* Research panel on bottom (if open) */}
-                {researchPanelOpen && (
-                  <div className={selectedFile ? "h-1/2 shrink-0 overflow-hidden" : "flex-1 overflow-hidden"}>
-                    <ResearchPanel />
-                  </div>
-                )}
-              </ErrorBoundary>
-            </div>
-          </>
-        )}
+          {/* Right panels */}
+          {hasRightPanel && (
+            <>
+              <div
+                className="w-1.5 shrink-0 cursor-col-resize bg-border/40 transition-colors hover:bg-primary/30 active:bg-primary/40"
+                onMouseDown={startDrag("right")}
+              />
+              <div
+                className="flex shrink-0 flex-col overflow-hidden border-l"
+                style={{ width: rightWidth }}
+              >
+                <ErrorBoundary>
+                  <ResearchPanel />
+                </ErrorBoundary>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
