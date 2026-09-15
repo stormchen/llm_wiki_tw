@@ -98,7 +98,11 @@ export function SourcesView() {
     }
   }
 
-  async function handleNotionImport(url: string) {
+  async function handleNotionImport(
+    url: string,
+    databaseMode: "multi-file" | "single-file" = "multi-file",
+    onProgress?: (msg: string) => void
+  ) {
     if (!project) return
     if (!notionApiKey) {
       throw new Error("Please set your Notion API Key in Settings > Integrations first.")
@@ -108,12 +112,19 @@ export function SourcesView() {
     const pp = normalizePath(project.path)
     
     try {
-      const { path } = await importFromNotion(pp, url, notionApiKey)
+      const result = await importFromNotion(pp, url, notionApiKey, {
+        databaseMode,
+        onProgress,
+      })
       await loadSources()
       
-      // Enqueue for serial ingest
-      if (llmConfig.apiKey || llmConfig.provider === "ollama" || llmConfig.provider === "custom") {
-        enqueueSourceIngest(project, [path], llmConfig).catch((err: unknown) =>
+      // Enqueue all generated paths for serial ingest
+      if (
+        result.paths &&
+        result.paths.length > 0 &&
+        (llmConfig.apiKey || llmConfig.provider === "ollama" || llmConfig.provider === "custom")
+      ) {
+        enqueueSourceIngest(project, result.paths, llmConfig).catch((err: unknown) =>
           console.error(`Failed to enqueue ingest:`, err)
         )
       }

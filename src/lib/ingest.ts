@@ -2644,6 +2644,7 @@ async function analyzeLongSourceInChunks(
 
     let raw = ""
     let hadError = false
+    let chunkErrorMessage = ""
     await streamChat(
       llmConfig,
       [
@@ -2663,6 +2664,8 @@ async function analyzeLongSourceInChunks(
         onDone: () => {},
         onError: (err) => {
           hadError = true
+          chunkErrorMessage = err.message
+          console.error(`[ingest:chunk] Chunk ${chunk.index}/${chunk.total} analysis failed:`, err)
           activity.updateItem(activityId, { status: "error", detail: `Chunk analysis failed: ${err.message}` })
         },
       },
@@ -2671,7 +2674,7 @@ async function analyzeLongSourceInChunks(
     )
 
     throwIfIngestAborted(signal, activityId)
-    if (hadError) throw new Error("Chunk analysis stream failed")
+    if (hadError) throw new Error(`Chunk analysis stream failed: ${chunkErrorMessage || "unknown error"}`)
 
     const chunkAnalysis = extractMarkedSection(raw, "Chunk Analysis") || raw.trim()
     const nextDigest = extractMarkedSection(raw, "Updated Global Digest")
